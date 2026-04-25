@@ -1,0 +1,28 @@
+{
+  "defaults": {
+    "workspaceMode": "copy",
+    "timeoutMs": 300000,
+    "maxTurns": 20
+  },
+  "cases": [
+    {
+      "id": "smoke-file-write",
+      "repoRoot": "../..",
+      "prompt": "Create a file named EVAL_SMOKE.md at the repository root containing exactly one line: eval harness smoke",
+      "verification": {
+        "command": "test -f EVAL_SMOKE.md && grep -Fx 'eval harness smoke' EVAL_SMOKE.md"
+      },
+      "success": {
+        "adapters": {
+          "cdx": {
+            "statuses": ["completed"]
+          },
+          "claude": {
+            "subtypes": ["success"]
+          }
+        }
+      },
+      "tags": ["smoke"]
+    }
+  ]
+}

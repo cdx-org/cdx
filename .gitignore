@@ -1,0 +1,6 @@
+node_modules*/
+.cdx-runs/
+.cdx-shared/
+.cdx-worktrees/
+.keepdoing/
+eval/results/

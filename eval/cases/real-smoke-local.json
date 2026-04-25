@@ -1,0 +1,60 @@
+{
+  "defaults": {
+    "workspaceMode": "copy",
+    "timeoutMs": 360000,
+    "maxTurns": 24
+  },
+  "cases": [
+    {
+      "id": "real-note-write-local",
+      "repoRoot": "../fixtures/smoke-repo",
+      "prompt": "Create a new file at notes/smoke-eval.md with exactly these two lines and do not modify any other file.\n# Smoke Eval\ncreated-by: orchestrator",
+      "verification": {
+        "command": "test -f notes/smoke-eval.md && printf '# Smoke Eval\\ncreated-by: orchestrator\\n' | cmp -s - notes/smoke-eval.md"
+      },
+      "adapterConfig": {
+        "cdx": {
+          "spawnArgs": {
+            "skipPlanner": true,
+            "minParallelism": 1,
+            "maxParallelism": 1,
+            "effort": "low",
+            "taskEffort": "low",
+            "watchdogEffort": "low",
+            "plannerEffort": "low",
+            "smartSpawn": false,
+            "scout": false,
+            "waveCheckpoint": false,
+            "recoveryEnabled": false
+          }
+        },
+        "claude": {
+          "coordinatorMode": false,
+          "extraArgs": [
+            "--bare"
+          ],
+          "mockServer": {}
+        }
+      },
+      "success": {
+        "adapters": {
+          "cdx": {
+            "statuses": [
+              "completed"
+            ]
+          },
+          "claude": {
+            "subtypes": [
+              "success"
+            ]
+          }
+        }
+      },
+      "tags": [
+        "smoke",
+        "real",
+        "mock"
+      ]
+    }
+  ]
+}

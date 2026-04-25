@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "cdx router.ask judge output",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "decision": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "option_id": { "type": "string" },
+        "rationale": { "type": "string" },
+        "tradeoffs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "option_id": { "type": "string" },
+              "pros": { "type": "array", "items": { "type": "string" } },
+              "cons": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "next_steps": { "type": "array", "items": { "type": "string" } },
+        "risks": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "type": "number" }
+      },
+      "required": ["option_id", "rationale", "next_steps"]
+    },
+    "message_for_agent": { "type": "string" }
+  },
+  "required": ["decision", "message_for_agent"]
+}
+
