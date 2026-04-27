@@ -1066,6 +1066,107 @@ function commandExists(candidate) {
   return false;
 }
 
+function fileExists(candidate) {
+  if (!candidate) return false;
+  try {
+    accessSync(candidate, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pushOpenCommand(commands, seen, command, args) {
+  const normalizedCommand = String(command ?? '').trim();
+  if (!normalizedCommand) return;
+  const key = `${normalizedCommand.toLowerCase()}\0${JSON.stringify(args ?? [])}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  commands.push({ command: normalizedCommand, args: args ?? [] });
+}
+
+function appendExecutableCandidate(commands, seen, candidate, target, { fileExistsFn, commandExistsFn }) {
+  const executable = String(candidate ?? '').trim();
+  if (!executable) return;
+
+  const hasDirSeparator = executable.includes('/') || executable.includes('\\');
+  if (hasDirSeparator) {
+    if (fileExistsFn(executable)) pushOpenCommand(commands, seen, executable, [target]);
+    return;
+  }
+
+  if (commandExistsFn(executable)) pushOpenCommand(commands, seen, executable, [target]);
+}
+
+function windowsBrowserPathCandidates(env = process.env) {
+  const localAppData = env.LOCALAPPDATA;
+  const programFiles = env.ProgramFiles;
+  const programFilesX86 = env['ProgramFiles(x86)'];
+  return [
+    localAppData && path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    programFiles && path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    programFilesX86 && path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    localAppData && path.join(localAppData, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    programFiles && path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    programFilesX86 && path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+  ].filter(Boolean);
+}
+
+export function buildOpenUrlCommands(
+  url,
+  {
+    platform = process.platform,
+    env = process.env,
+    fileExistsFn = fileExists,
+    commandExistsFn = commandExists,
+  } = {},
+) {
+  const target = String(url ?? '').trim();
+  if (!target) return [];
+
+  const commands = [];
+  const seen = new Set();
+
+  const browserOverride = String(env.CDX_BROWSER ?? '').trim();
+  if (browserOverride) {
+    appendExecutableCandidate(commands, seen, browserOverride, target, { fileExistsFn, commandExistsFn });
+  }
+
+  if (platform === 'darwin') {
+    pushOpenCommand(commands, seen, 'open', ['-a', 'Google Chrome', target]);
+    pushOpenCommand(commands, seen, 'open', [target]);
+    return commands;
+  }
+
+  if (platform === 'win32') {
+    for (const candidate of windowsBrowserPathCandidates(env)) {
+      appendExecutableCandidate(commands, seen, candidate, target, { fileExistsFn, commandExistsFn });
+    }
+
+    for (const candidate of ['chrome.exe', 'chrome', 'msedge.exe', 'msedge']) {
+      appendExecutableCandidate(commands, seen, candidate, target, { fileExistsFn, commandExistsFn });
+    }
+
+    pushOpenCommand(commands, seen, 'explorer.exe', [target]);
+    pushOpenCommand(commands, seen, 'rundll32.exe', ['url.dll,FileProtocolHandler', target]);
+    pushOpenCommand(commands, seen, 'cmd', ['/d', '/s', '/c', 'start', '', target]);
+    return commands;
+  }
+
+  const linuxCandidates = [
+    'google-chrome',
+    'google-chrome-stable',
+    'chromium',
+    'chromium-browser',
+  ];
+  for (const candidate of linuxCandidates) {
+    appendExecutableCandidate(commands, seen, candidate, target, { fileExistsFn, commandExistsFn });
+  }
+
+  appendExecutableCandidate(commands, seen, 'xdg-open', target, { fileExistsFn, commandExistsFn });
+  return commands;
+}
+
 function runDetached(command, args, { timeoutMs = 1500 } = {}) {
   return new Promise(resolve => {
     let settled = false;
@@ -1077,10 +1178,12 @@ function runDetached(command, args, { timeoutMs = 1500 } = {}) {
 
     let timer = null;
     try {
+      const baseCommand = path.basename(String(command ?? '')).toLowerCase();
+      const windowsHide = baseCommand === 'cmd' || baseCommand === 'cmd.exe';
       const child = spawn(command, args, {
         stdio: 'ignore',
         detached: true,
-        windowsHide: true,
+        windowsHide,
       });
       child.unref();
 
@@ -1100,32 +1203,9 @@ async function openUrlPreferChrome(url) {
   const target = String(url ?? '').trim();
   if (!target) return false;
 
-  if (process.platform === 'darwin') {
-    const chromeOk = await runDetached('open', ['-a', 'Google Chrome', target]);
-    if (chromeOk) return true;
-    return runDetached('open', [target]);
-  }
-
-  if (process.platform === 'win32') {
-    const chromeOk = await runDetached('cmd', ['/c', 'start', '', 'chrome', target]);
-    if (chromeOk) return true;
-    return runDetached('cmd', ['/c', 'start', '', target]);
-  }
-
-  const linuxCandidates = [
-    'google-chrome',
-    'google-chrome-stable',
-    'chromium',
-    'chromium-browser',
-  ];
-  for (const candidate of linuxCandidates) {
-    if (!commandExists(candidate)) continue;
-    const ok = await runDetached(candidate, [target]);
+  for (const { command, args } of buildOpenUrlCommands(target)) {
+    const ok = await runDetached(command, args);
     if (ok) return true;
-  }
-
-  if (commandExists('xdg-open')) {
-    return runDetached('xdg-open', [target]);
   }
   return false;
 }
