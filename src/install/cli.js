@@ -7,6 +7,7 @@ const PACKAGE_NAME = 'mcp-cdx';
 const DEFAULT_MCP_NAME = 'cdx';
 const DEFAULT_ENTRY_RELATIVE_PATH = 'src/cli/cdx-appserver-mcp-server.js';
 const DEFAULT_LEGACY_NAMES = 'keepdoing,codex-as-service,codex_as_service';
+let backupCounter = 0;
 
 function trim(value) {
   return String(value ?? '').trim();
@@ -258,9 +259,46 @@ function backupConfig({ configDir, configFile, enabled }) {
   if (!fs.existsSync(configFile)) return null;
   const backupsDir = path.join(configDir, 'backups');
   fs.mkdirSync(backupsDir, { recursive: true });
-  const out = path.join(backupsDir, `config.toml.${timestamp()}.toml`);
+  backupCounter += 1;
+  const out = path.join(backupsDir, `config.toml.${timestamp()}.${process.pid}.${backupCounter}.toml`);
   fs.copyFileSync(configFile, out);
   return out;
+}
+
+function latestBackupPath({ configDir }) {
+  const backupsDir = path.join(configDir, 'backups');
+  if (!fs.existsSync(backupsDir) || !fs.statSync(backupsDir).isDirectory()) return null;
+  const candidates = fs
+    .readdirSync(backupsDir)
+    .filter(name => /^config\.toml\..*\.toml$/.test(name))
+    .map(name => {
+      const fullPath = path.join(backupsDir, name);
+      const stat = fs.statSync(fullPath);
+      return { fullPath, mtimeMs: stat.mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return candidates[0]?.fullPath ?? null;
+}
+
+function restoreConfig({ configDir, configFile, source }) {
+  const rawSource = trim(source) || 'latest';
+  const restoreSource =
+    rawSource === 'latest'
+      ? latestBackupPath({ configDir })
+      : path.isAbsolute(rawSource)
+        ? rawSource
+        : path.resolve(process.cwd(), rawSource);
+
+  if (!restoreSource || !fs.existsSync(restoreSource) || !fs.statSync(restoreSource).isFile()) {
+    throw new Error(`Backup not found: ${rawSource}`);
+  }
+
+  fs.mkdirSync(configDir, { recursive: true });
+  if (fs.existsSync(configFile)) {
+    backupConfig({ configDir, configFile, enabled: true });
+  }
+  fs.copyFileSync(restoreSource, configFile);
+  return restoreSource;
 }
 
 function installSkills({ skillsDir, codexSkillsDir, enabled }) {
@@ -293,6 +331,8 @@ Commands:
   install     Add or update [mcp_servers.<name>] in ${configFile}
   uninstall   Remove the entry
   doctor      Validate environment and configuration
+  backup      Backup ${configFile}
+  restore     Restore from backup (restore [latest|/path/to/file])
   help        Show this message
 
 Environment overrides:
@@ -302,11 +342,13 @@ Environment overrides:
   CONFIG_FILE           (default: CODEX_HOME/config.toml)
 
 install.sh wrapper:
-  INSTALL_DEPS          If 1, ./install.sh install runs npm install first (default: 1)
+  INSTALL_DEPS          If 1, install wrappers run npm install first (default: 1)
   INSTALL_NPM_BIN       npm binary to use for dependency install (default: npm)
   INSTALL_NPM_COMMAND   npm subcommand for dependency install (default: install)
   INSTALL_NPM_EXTRA_ARGS Extra args appended to the npm install command
                         (default: --no-fund --no-audit)
+  INSTALL_NODE_BIN      node binary used to run the installer (default: node)
+  SKIP_NODE_CHECK       If 1, skip wrapper Node.js/npm preflight checks
 
 Remote install wrapper:
   CDX_INSTALL_REPO      Git repo used by curl|bash or irm|iex installs
@@ -314,6 +356,7 @@ Remote install wrapper:
   CDX_INSTALL_REF       Branch/tag/ref to install (default: main)
   CDX_INSTALL_DIR       Checkout/cache dir for remote installs
                         (default: ~/.local/share/mcp-cdx or %LOCALAPPDATA%\\mcp-cdx)
+  CDX_INSTALL_SKIP_UPDATE If 1, do not update an existing streamed checkout
 
   MCP_NAME              (default: ${defaultName})
   MCP_ALIAS_NAMES       Comma-separated alias names to install alongside MCP_NAME
@@ -460,6 +503,31 @@ function main() {
       }
       fs.writeFileSync(configFile, configText, 'utf8');
       console.error(`Uninstalled MCP server(s): ${entryNames.join(', ')}`);
+      return;
+    }
+    case 'backup': {
+      const backup = backupConfig({ configDir, configFile, enabled: true });
+      if (!backup) {
+        console.error(`Nothing to backup: ${configFile} not found`);
+        process.exitCode = 1;
+        return;
+      }
+      console.error(`Backup: ${backup}`);
+      console.log(backup);
+      return;
+    }
+    case 'restore': {
+      try {
+        const restoredFrom = restoreConfig({
+          configDir,
+          configFile,
+          source: process.argv[3] ?? 'latest',
+        });
+        console.error(`Restored ${configFile} from ${restoredFrom}`);
+      } catch (err) {
+        console.error(err?.message ?? String(err));
+        process.exitCode = 1;
+      }
       return;
     }
     case 'doctor': {

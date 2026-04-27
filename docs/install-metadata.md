@@ -39,7 +39,14 @@ irm https://raw.githubusercontent.com/cdx-org/cdx/main/install.ps1 | iex
 
 When run from a pipe, the wrappers clone or update the repo in the remote
 install directory, install npm dependencies, and then invoke `src/install/cli.js`
-with `install`.
+with `install`. Existing streamed checkouts are updated only when their git
+worktree is clean; dirty checkouts are left untouched so local edits are not
+lost. Set `CDX_INSTALL_SKIP_UPDATE=1` to disable update attempts entirely.
+
+The wrappers also default to `install` when no command is provided and perform a
+Node.js/npm preflight before dependency installation. Override the runtime with
+`INSTALL_NODE_BIN` and `INSTALL_NPM_BIN`, or set `SKIP_NODE_CHECK=1` to bypass
+the preflight.
 
 ## Compatibility
 
@@ -48,6 +55,8 @@ with `install`.
 - Install runs remove legacy MCP sections named `keepdoing`,
   `codex-as-service`, and `codex_as_service` unless
   `MCP_REMOVE_LEGACY_NAMES=0` is set.
+- `backup` and `restore [latest|path]` are available for explicit config
+  recovery in addition to the automatic pre-install backup.
 
 ## Config Assets
 

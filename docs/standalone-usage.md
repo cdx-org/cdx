@@ -17,7 +17,10 @@ irm https://raw.githubusercontent.com/cdx-org/cdx/main/install.ps1 | iex
 ```
 
 Remote installs clone or update the repo under the user data directory by
-default. Set `CDX_INSTALL_DIR` to choose another checkout/cache directory.
+default. Set `CDX_INSTALL_DIR` to choose another checkout/cache directory. If
+an existing streamed checkout has local changes, the wrappers skip the update
+instead of overwriting those edits; set `CDX_INSTALL_SKIP_UPDATE=1` to always
+use the current checkout as-is.
 
 From a local checkout, use the platform wrapper directly:
 
@@ -30,12 +33,16 @@ From a local checkout, use the platform wrapper directly:
 ```
 
 The install wrappers run `npm install --no-fund --no-audit` in the project root
-before updating Codex config.
+before updating Codex config. They also preflight Node.js/npm and look in common
+install locations on Windows and Unix-like systems before invoking the Node
+installer. Set `SKIP_NODE_CHECK=1` to bypass that preflight.
 
 The default install target is the local
 `src/cli/cdx-appserver-mcp-server.js` entrypoint. Use `./install.sh help` or
 `.\install.ps1 help` to inspect installer overrides such as alternate entry
 names, alias registration, environment injection, and legacy-entry cleanup.
+Both wrappers default to `install` when no command is provided, including local
+checkout usage.
 
 Default installs do not write an `env_vars` pass-through list. CDX launches
 Codex app-server using ChatGPT auth by default; set `CDX_CODEX_AUTH_MODE=api`

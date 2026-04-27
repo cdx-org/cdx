@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..'));
 const installerPath = path.join(repoRoot, 'src', 'install', 'cli.js');
 const installScriptPath = path.join(repoRoot, 'install.sh');
+const installPs1Path = path.join(repoRoot, 'install.ps1');
 
 function countMatches(text, pattern) {
   const matches = text.match(pattern);
@@ -52,8 +53,16 @@ function writeFileSyncRecursive(filePath, content) {
 function createTempProject(tempRoot, { skillNames = [] } = {}) {
   const projectRoot = path.join(tempRoot, 'project');
   writeFileSyncRecursive(
+    path.join(projectRoot, 'package.json'),
+    JSON.stringify({ name: 'fixture-mcp-cdx', version: '0.0.0', type: 'module' }, null, 2),
+  );
+  writeFileSyncRecursive(
     path.join(projectRoot, 'src', 'cli', 'cdx-appserver-mcp-server.js'),
     '#!/usr/bin/env node\nconsole.log("stub");\n',
+  );
+  writeFileSyncRecursive(
+    path.join(projectRoot, 'src', 'install', 'cli.js'),
+    fs.readFileSync(installerPath, 'utf8'),
   );
 
   for (const name of skillNames) {
@@ -241,6 +250,79 @@ test('install.sh preserves wrapper behavior and supports INSTALL_NODE_BIN overri
       fs.readFileSync(npmLog, 'utf8').trim(),
       `${repoRoot}|install --no-fund --no-audit`,
     );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('install.ps1 defaults to install and supports node/npm overrides', async t => {
+  if (process.platform !== 'win32') {
+    t.skip('PowerShell wrapper test runs only on Windows');
+    return;
+  }
+
+  const powershellAvailable = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()']).then(
+    () => true,
+    () => false,
+  );
+  if (!powershellAvailable) {
+    t.skip('powershell.exe is not available in this environment');
+    return;
+  }
+
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-cdx-install-'));
+  const projectRoot = createTempProject(tempRoot, { skillNames: ['wrapped-ps-skill'] });
+  const entryPath = path.join(projectRoot, 'src', 'cli', 'cdx-appserver-mcp-server.js');
+  const skillsSource = path.join(projectRoot, 'skills');
+  const codexHome = path.join(tempRoot, '.codex');
+  const configFile = path.join(codexHome, 'config.toml');
+  const nodeWrapper = path.join(tempRoot, 'node-wrapper.cmd');
+  const npmWrapper = path.join(tempRoot, 'npm-wrapper.cmd');
+  const npmLog = path.join(tempRoot, 'npm-ps.log');
+
+  try {
+    fs.writeFileSync(
+      nodeWrapper,
+      `@echo off\r\n"${process.execPath}" %*\r\n`,
+      'utf8',
+    );
+    fs.writeFileSync(
+      npmWrapper,
+      `@echo off\r\necho %CD%^|%*>> "${npmLog}"\r\nexit /b 0\r\n`,
+      'utf8',
+    );
+
+    await execFileAsync('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      installPs1Path,
+    ], {
+      cwd: tempRoot,
+      env: {
+        ...process.env,
+        PROJECT_DIR: projectRoot,
+        CODEX_HOME: codexHome,
+        INSTALL_NODE_BIN: nodeWrapper,
+        INSTALL_NPM_BIN: npmWrapper,
+        MCP_NAME: 'cdx-install-powershell-test',
+        MCP_ENTRY_PATH: entryPath,
+        SKILLS_DIR: skillsSource,
+        INSTALL_BACKUP_BEFORE: '0',
+      },
+    });
+
+    const configText = fs.readFileSync(configFile, 'utf8');
+    const section = extractMcpSection(configText, 'cdx-install-powershell-test');
+    assert.match(section, /\[mcp_servers\.cdx-install-powershell-test\]/);
+    assert.match(
+      section,
+      new RegExp(`args = \\["${escapeRegExp(tomlEscape(entryPath))}"\\]`),
+    );
+    assert.ok(fs.existsSync(path.join(codexHome, 'skills', 'wrapped-ps-skill', 'SKILL.md')));
+    const npmLines = fs.readFileSync(npmLog, 'utf8').trim().split(/\r?\n/);
+    assert.ok(npmLines.includes(`${projectRoot}|install --no-fund --no-audit`));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

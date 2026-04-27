@@ -216,6 +216,48 @@ test('install CLI doctor passes after install and uninstall removes only registe
   });
 });
 
+test('install CLI can backup and restore config.toml explicitly', async () => {
+  await withSandbox(async ({ backupDir, codexHome, configFile }) => {
+    await mkdir(codexHome, { recursive: true });
+    await writeFile(
+      configFile,
+      ['[mcp_servers.original]', 'command = "node"', 'args = ["original.js"]', ''].join('\n'),
+      'utf8',
+    );
+
+    const backupResult = await runInstaller(['backup'], {
+      env: {
+        CODEX_HOME: codexHome,
+        INSTALL_SKILLS: '0',
+      },
+    });
+    assert.equal(backupResult.code, 0);
+    assert.match(backupResult.stderr, /Backup: /);
+
+    const backups = await readdir(backupDir);
+    assert.equal(backups.length, 1);
+
+    await writeFile(
+      configFile,
+      ['[mcp_servers.changed]', 'command = "node"', 'args = ["changed.js"]', ''].join('\n'),
+      'utf8',
+    );
+
+    const restoreResult = await runInstaller(['restore'], {
+      env: {
+        CODEX_HOME: codexHome,
+        INSTALL_SKILLS: '0',
+      },
+    });
+    assert.equal(restoreResult.code, 0);
+    assert.match(restoreResult.stderr, /Restored .*config\.toml from /);
+
+    const restoredText = await readFile(configFile, 'utf8');
+    assert.match(restoredText, /\[mcp_servers\.original\]/);
+    assert.doesNotMatch(restoredText, /\[mcp_servers\.changed\]/);
+  });
+});
+
 test('install CLI copies skills from the configured standalone payload directory', async () => {
   await withSandbox(async ({ codexHome, skillsDir, tempRoot }) => {
     const fixtureSkills = await createFixtureSkills(tempRoot);
