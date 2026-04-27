@@ -1,14 +1,6 @@
 # `mcp-cdx`
 
-Standalone CDX Codex MCP app-server and orchestration package.
-
-This repository is self-contained. The runnable entrypoints, install flow,
-skills, prompt templates, and runtime modules all resolve inside this checkout.
-It does not depend on `mcp-keepdoing` at runtime.
-
-## Install
-
-Install directly from GitHub:
+## Quick Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cdx-org/cdx/main/install.sh | bash
@@ -18,7 +10,15 @@ curl -fsSL https://raw.githubusercontent.com/cdx-org/cdx/main/install.sh | bash
 irm https://raw.githubusercontent.com/cdx-org/cdx/main/install.ps1 | iex
 ```
 
-Or install from a local checkout:
+Standalone CDX Codex MCP app-server and orchestration package.
+
+This repository is self-contained. The runnable entrypoints, install flow,
+skills, prompt templates, and runtime modules all resolve inside this checkout.
+It does not depend on `mcp-keepdoing` at runtime.
+
+## Install
+
+Install from a local checkout:
 
 ```bash
 ./install.sh install
