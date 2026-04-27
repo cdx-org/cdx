@@ -14,10 +14,32 @@ That split is intentional:
 ## Installer Defaults
 
 - Installer entrypoint: `src/install/cli.js`
+- Shell wrapper: `install.sh`
+- PowerShell wrapper: `install.ps1`
 - Default runtime entry: `src/cli/cdx-appserver-mcp-server.js`
 - Default config target: `~/.codex/config.toml`
 - Default copied skills source: `PROJECT_DIR/skills`
 - Default copied skills destination: `~/.codex/skills`
+- Default remote install repo: `https://github.com/cdx-org/cdx.git`
+- Default remote install ref: `main`
+- Default remote install directory: `~/.local/share/mcp-cdx` on Unix-like
+  systems and `%LOCALAPPDATA%\mcp-cdx` on Windows.
+
+## Remote Install
+
+Use the raw GitHub wrappers for one-command installs:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cdx-org/cdx/main/install.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/cdx-org/cdx/main/install.ps1 | iex
+```
+
+When run from a pipe, the wrappers clone or update the repo in the remote
+install directory, install npm dependencies, and then invoke `src/install/cli.js`
+with `install`.
 
 ## Compatibility
 

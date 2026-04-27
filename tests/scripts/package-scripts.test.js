@@ -75,5 +75,5 @@ test('resolveProjectRoot walks up from both helper and script entrypoints', () =
   const scriptRoot = resolveProjectRoot(new URL('../../scripts/smoke-startup-paths.js', import.meta.url));
 
   assert.equal(helperRoot, scriptRoot);
-  assert.ok(helperRoot.endsWith('/mcp-cdx'));
+  assert.ok(helperRoot.replace(/\\/g, '/').endsWith('/mcp-cdx'));
 });

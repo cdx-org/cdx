@@ -18,7 +18,10 @@ test('standalone docs describe local mcp-cdx install and layout', () => {
   const cliNotes = readRepoFile('src/cli/README.md');
 
   assert.match(usage, /standalone `mcp-cdx`/i);
+  assert.match(usage, /curl -fsSL https:\/\/raw\.githubusercontent\.com\/cdx-org\/cdx\/main\/install\.sh \| bash/);
+  assert.match(usage, /irm https:\/\/raw\.githubusercontent\.com\/cdx-org\/cdx\/main\/install\.ps1 \| iex/);
   assert.match(usage, /\.\/install\.sh install/);
+  assert.match(usage, /\.\\install\.ps1 install/);
   assert.match(usage, /src\/cli\/cdx-appserver-mcp-server\.js/);
   assert.match(usage, /cdx\.help/);
 
@@ -71,6 +74,7 @@ test('install help exposes compatibility aliases without old package naming when
   });
 
   assert.match(output, /Usage: \.\/install\.sh <command>/);
+  assert.match(output, /\.\/install\.ps1 <command>/);
   assert.match(output, /Installs the standalone mcp-cdx app-server into Codex\./);
   assert.match(
     output,

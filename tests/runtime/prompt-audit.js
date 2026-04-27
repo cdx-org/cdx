@@ -67,7 +67,7 @@ export async function loadPromptRelatedSourceFiles() {
     ) {
       entries.push({
         absPath,
-        relPath: path.relative(REPO_ROOT, absPath),
+        relPath: path.relative(REPO_ROOT, absPath).replace(/\\/g, '/'),
         source,
       });
     }

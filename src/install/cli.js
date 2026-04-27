@@ -283,6 +283,7 @@ function installSkills({ skillsDir, codexSkillsDir, enabled }) {
 
 function usage({ defaultName, configFile, envVarsDefault }) {
   return `Usage: ./install.sh <command>
+       ./install.ps1 <command>
 
 Installs the standalone ${PACKAGE_NAME} app-server into Codex.
 The package/repo name is ${PACKAGE_NAME}; the default MCP server name remains ${DEFAULT_MCP_NAME}.
@@ -306,6 +307,13 @@ install.sh wrapper:
   INSTALL_NPM_COMMAND   npm subcommand for dependency install (default: install)
   INSTALL_NPM_EXTRA_ARGS Extra args appended to the npm install command
                         (default: --no-fund --no-audit)
+
+Remote install wrapper:
+  CDX_INSTALL_REPO      Git repo used by curl|bash or irm|iex installs
+                        (default: https://github.com/cdx-org/cdx.git)
+  CDX_INSTALL_REF       Branch/tag/ref to install (default: main)
+  CDX_INSTALL_DIR       Checkout/cache dir for remote installs
+                        (default: ~/.local/share/mcp-cdx or %LOCALAPPDATA%\\mcp-cdx)
 
   MCP_NAME              (default: ${defaultName})
   MCP_ALIAS_NAMES       Comma-separated alias names to install alongside MCP_NAME

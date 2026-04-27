@@ -109,6 +109,10 @@ test('package metadata keeps the standalone mcp-cdx startup surface local to thi
 });
 
 test('direct CLI entrypoints keep executable file modes where the source ships them', async () => {
+  if (process.platform === 'win32') {
+    return;
+  }
+
   for (const file of CLI_FILES) {
     const fileStat = await stat(resolveCliPath(file));
     const isExecutable = (fileStat.mode & 0o111) !== 0;

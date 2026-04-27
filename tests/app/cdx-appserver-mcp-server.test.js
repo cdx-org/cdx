@@ -1266,7 +1266,7 @@ test('cdx status can revive detached backend journal state after backend exit an
     backendPid = Number.parseInt(String(registry?.pid ?? ''), 10);
     assert.ok(Number.isInteger(backendPid) && backendPid > 0);
 
-    process.kill(-backendPid, 'SIGTERM');
+    await stopDetachedProcess(backendPid);
     await waitForCondition(() => {
       try {
         process.kill(backendPid, 0);
@@ -1406,7 +1406,7 @@ test('cdx resume can restart an orphaned detached run and persist old/new run li
     backendPid = Number.parseInt(String(registry?.pid ?? ''), 10);
     assert.ok(Number.isInteger(backendPid) && backendPid > 0);
 
-    process.kill(-backendPid, 'SIGTERM');
+    await stopDetachedProcess(backendPid);
     await waitForCondition(() => {
       try {
         process.kill(backendPid, 0);

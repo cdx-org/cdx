@@ -20,6 +20,12 @@ function escapeRegExp(value) {
   return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function tomlEscape(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+}
+
 async function createInstallSandbox() {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'mcp-cdx-install-'));
   const codexHome = path.join(tempRoot, '.codex');
@@ -149,7 +155,7 @@ test('install CLI writes standalone cdx entries, aliases, and legacy cleanup int
     assert.match(configText, /\[mcp_servers\.cdx-compat\]/);
     assert.match(
       configText,
-      new RegExp(`args = \\["${escapeRegExp(DEFAULT_ENTRY_PATH)}"\\]`),
+      new RegExp(`args = \\["${escapeRegExp(tomlEscape(DEFAULT_ENTRY_PATH))}"\\]`),
     );
     assert.doesNotMatch(configText, /\nenv_vars\s*=/);
   });

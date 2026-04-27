@@ -12,11 +12,11 @@ this repository instead of depending on an external source tree.
 - `src/runtime/`
   Shared runtime modules and assets used by the CLI entrypoints.
 - `src/install/`
-  Install-time helpers behind `./install.sh`.
+  Install-time helpers behind `./install.sh` and `.\install.ps1`.
 - `src/skills/`
   Skill metadata and validation helpers for the shipped standalone payload.
 - `skills/`
-  Installable Codex skills copied by `./install.sh install` when present. The
+  Installable Codex skills copied by the install wrappers when present. The
   current shipped set is `cdx-preflight` and `cdx-wait-controller`.
 - `tests/skills/`
   Focused standalone payload checks that ensure the shipped skills remain
@@ -43,8 +43,11 @@ Automated checks enforce the same rule:
 
 ## Install Target
 
-`./install.sh install` bootstraps local npm dependencies, registers the default
-`cdx` MCP server, and points it at `src/cli/cdx-appserver-mcp-server.js`.
+`./install.sh install` and `.\install.ps1 install` bootstrap local npm
+dependencies, register the default `cdx` MCP server, and point it at
+`src/cli/cdx-appserver-mcp-server.js`. When run through
+`curl -fsSL ... | bash` or `irm ... | iex`, the wrappers first clone or update
+this repository in the user data directory.
 
 Compatibility aliases and legacy-entry cleanup remain install-time migration
 helpers. The standalone package and repository names are `mcp-cdx`.

@@ -13,6 +13,7 @@ export const EXPECTED_INSTALLER_ENTRY = 'src/install/cli.js';
 
 export const REQUIRED_ROOT_FILES = Object.freeze([
   'install.sh',
+  'install.ps1',
   'package.json',
   'package-lock.json',
 ]);
@@ -106,6 +107,10 @@ function escapeRegExp(value) {
   return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function toAuditPath(value) {
+  return String(value ?? '').replace(/\\/g, '/');
+}
+
 const SOURCE_REPO_ROOT_PATTERN = new RegExp(escapeRegExp(SOURCE_REPO_ROOT));
 const SOURCE_REPO_NAME_PATTERN = new RegExp(`\\b${escapeRegExp(SOURCE_REPO_NAME)}\\b`);
 const ALLOWED_SOURCE_TOKEN_REFERENCES = new Map([
@@ -114,11 +119,16 @@ const ALLOWED_SOURCE_TOKEN_REFERENCES = new Map([
 
 function isTextAuditFile(filePath) {
   const baseName = path.basename(filePath);
-  if (baseName === 'install.sh' || baseName === 'package.json' || baseName === 'package-lock.json') {
+  if (
+    baseName === 'install.sh' ||
+    baseName === 'install.ps1' ||
+    baseName === 'package.json' ||
+    baseName === 'package-lock.json'
+  ) {
     return true;
   }
 
-  return /\.(?:cjs|js|json|md|mjs|sh|toml|txt|ya?ml)$/i.test(baseName);
+  return /\.(?:cjs|js|json|md|mjs|ps1|sh|toml|txt|ya?ml)$/i.test(baseName);
 }
 
 async function pathExists(targetPath) {
@@ -156,11 +166,11 @@ async function listFilesRecursive(rootDir, relativeRoot) {
     for (const entry of entries) {
       const entryRelativePath = path.join(current, entry.name);
       if (entry.isDirectory()) {
-        queue.push(entryRelativePath);
+        queue.push(toAuditPath(entryRelativePath));
         continue;
       }
       if (entry.isFile() && isTextAuditFile(entryRelativePath)) {
-        results.push(entryRelativePath);
+        results.push(toAuditPath(entryRelativePath));
       }
     }
   }
@@ -189,6 +199,10 @@ async function findMissingPaths(rootDir, requiredPaths) {
 }
 
 async function findNonExecutablePaths(rootDir, executablePaths) {
+  if (process.platform === 'win32') {
+    return [];
+  }
+
   const nonExecutablePaths = [];
   for (const relativePath of executablePaths) {
     const absolutePath = path.join(rootDir, relativePath);
@@ -261,6 +275,16 @@ async function auditInstallSurface(
     }
     if (!installSh.includes('PROJECT_DIR')) {
       installerIssues.push('install.sh should resolve the installer from PROJECT_DIR');
+    }
+  }
+
+  const installPs1 = await readTextIfExists(rootDir, 'install.ps1');
+  if (installPs1 !== null) {
+    if (!installPs1.includes(expectedInstallerEntry)) {
+      installerIssues.push(`install.ps1 should invoke "${expectedInstallerEntry}"`);
+    }
+    if (!installPs1.includes('PROJECT_DIR')) {
+      installerIssues.push('install.ps1 should resolve the installer from PROJECT_DIR');
     }
   }
 

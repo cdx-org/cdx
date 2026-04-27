@@ -17,6 +17,16 @@ function countMatches(text, pattern) {
   return matches ? matches.length : 0;
 }
 
+function tomlEscape(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+}
+
+function escapeRegExp(value) {
+  return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function extractMcpSection(configText, name) {
   const header = `[mcp_servers.${name}]`;
   const lines = String(configText).split(/\r?\n/);
@@ -86,7 +96,7 @@ test('install CLI registers the default app-server entry without env_vars by def
     assert.doesNotMatch(section, /\nenv_vars\s*=/);
     assert.match(
       section,
-      new RegExp(`\\[mcp_servers\\.cdx-install-test\\][\\s\\S]*args = \\["${expectedEntry.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\]`),
+      new RegExp(`\\[mcp_servers\\.cdx-install-test\\][\\s\\S]*args = \\["${escapeRegExp(tomlEscape(expectedEntry))}"\\]`),
     );
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -170,7 +180,16 @@ test('install CLI removes legacy sections and installs aliases alongside the pri
   }
 });
 
-test('install.sh preserves wrapper behavior and supports INSTALL_NODE_BIN overrides', async () => {
+test('install.sh preserves wrapper behavior and supports INSTALL_NODE_BIN overrides', async t => {
+  const bashAvailable = await execFileAsync('bash', ['--version']).then(
+    () => true,
+    () => false,
+  );
+  if (!bashAvailable) {
+    t.skip('bash is not available in this environment');
+    return;
+  }
+
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-cdx-install-'));
   const projectRoot = createTempProject(tempRoot, { skillNames: ['wrapped-skill'] });
   const entryPath = path.join(projectRoot, 'src', 'cli', 'cdx-appserver-mcp-server.js');
@@ -215,7 +234,7 @@ test('install.sh preserves wrapper behavior and supports INSTALL_NODE_BIN overri
     assert.doesNotMatch(section, /\nenv_vars\s*=/);
     assert.match(
       section,
-      new RegExp(`args = \\["${entryPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\]`),
+      new RegExp(`args = \\["${escapeRegExp(tomlEscape(entryPath))}"\\]`),
     );
     assert.ok(fs.existsSync(path.join(codexHome, 'skills', 'wrapped-skill', 'SKILL.md')));
     assert.equal(

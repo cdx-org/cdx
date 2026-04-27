@@ -23,7 +23,7 @@ test('parseArgs accepts adapter and corpus overrides', () => {
     { projectRoot: '/tmp/mcp-cdx' },
   );
 
-  assert.equal(options.corpusPath, '/tmp/mcp-cdx/eval/cases/custom.json');
+  assert.equal(options.corpusPath, path.resolve('/tmp/mcp-cdx', 'eval/cases/custom.json'));
   assert.deepEqual(options.adapters, ['cdx']);
   assert.deepEqual(options.caseIds, ['alpha', 'beta']);
   assert.equal(options.defaultTimeoutMs, 120000);

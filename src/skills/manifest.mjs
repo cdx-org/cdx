@@ -25,6 +25,10 @@ function listTextFiles(dir) {
   return files.sort();
 }
 
+function toPortablePath(value) {
+  return String(value ?? '').replace(/\\/g, '/');
+}
+
 export function resolveProjectRoot(fromUrl = import.meta.url) {
   return path.resolve(path.dirname(fileURLToPath(fromUrl)), '..', '..');
 }
@@ -73,7 +77,7 @@ export function validateShippedSkills(projectRoot = resolveProjectRoot()) {
     }
 
     for (const filePath of listTextFiles(skillDir)) {
-      const relativePath = path.relative(projectRoot, filePath);
+      const relativePath = toPortablePath(path.relative(projectRoot, filePath));
       const content = fs.readFileSync(filePath, 'utf8');
       for (const forbiddenSnippet of FORBIDDEN_SKILL_TEXT_SNIPPETS) {
         if (content.includes(forbiddenSnippet)) {

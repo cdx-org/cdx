@@ -119,7 +119,7 @@ exec node /Users/hancho01/git/mcp-keepdoing/src/install/cli.js "$@"
 
     assert.equal(result.hasIssues, true);
     assert.deepEqual(result.missingPaths, [EXPECTED_INSTALLER_ENTRY]);
-    assert.deepEqual(result.nonExecutablePaths, ['install.sh']);
+    assert.deepEqual(result.nonExecutablePaths, process.platform === 'win32' ? [] : ['install.sh']);
     assert.deepEqual(result.presentDisallowedPaths, [...DISALLOWED_LAYOUT_PATHS.filter(path => path === 'src/lib')]);
     assert.match(result.packageIssues.join('\n'), /package\.json name should be "mcp-cdx"/);
     assert.match(
