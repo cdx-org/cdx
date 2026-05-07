@@ -39,6 +39,9 @@ const PRE_TASK_OUTPUT_TAIL_CHARS = Math.max(
   DEFAULT_TASK_OUTPUT_TAIL_CHARS,
   parseNonNegativeInt(process.env.CDX_PRE_TASK_OUTPUT_TAIL_CHARS) ?? 360,
 );
+const TOKEN_USAGE_BUCKET_MS = 5 * 60 * 1000;
+const TOKEN_USAGE_CHART_BUCKETS = 12;
+const TOKEN_USAGE_BUCKET_LIMIT = 96;
 
 function pickFirstString(...values) {
   for (const candidate of values) {
@@ -141,6 +144,133 @@ function readTokenCount(obj, ...paths) {
     if (parsed !== null) return parsed;
   }
   return null;
+}
+
+function normalizeTimestampMs(value, fallback = Date.now()) {
+  if (value instanceof Date && Number.isFinite(value.getTime())) return value.getTime();
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Number.isFinite(fallback) ? fallback : Date.now();
+}
+
+function tokenUsageBucketStart(timestamp) {
+  const ts = normalizeTimestampMs(timestamp);
+  return Math.floor(ts / TOKEN_USAGE_BUCKET_MS) * TOKEN_USAGE_BUCKET_MS;
+}
+
+function tokenUsageParts(input, cachedInput, output) {
+  return {
+    input: Math.max(0, Number(input) || 0),
+    cachedInput: Math.max(0, Number(cachedInput) || 0),
+    output: Math.max(0, Number(output) || 0),
+  };
+}
+
+function tokenUsageTotal(parts) {
+  if (!isObject(parts)) return 0;
+  const input = Math.max(Number(parts.input) || 0, Number(parts.cachedInput) || 0);
+  const output = Math.max(0, Number(parts.output) || 0);
+  return input + output;
+}
+
+function ensureTokenUsageStores(run) {
+  if (!run || !isObject(run)) return null;
+  if (!(run.tokenUsageBuckets instanceof Map)) run.tokenUsageBuckets = new Map();
+  if (!(run.tokenUsageEvents instanceof RingBuffer)) run.tokenUsageEvents = new RingBuffer(2000);
+  return {
+    buckets: run.tokenUsageBuckets,
+    events: run.tokenUsageEvents,
+  };
+}
+
+function pruneTokenUsageBuckets(run, latestStart) {
+  const buckets = run?.tokenUsageBuckets;
+  if (!(buckets instanceof Map)) return;
+  const minStart = latestStart - ((TOKEN_USAGE_BUCKET_LIMIT - 1) * TOKEN_USAGE_BUCKET_MS);
+  for (const key of buckets.keys()) {
+    const start = Number(key);
+    if (!Number.isFinite(start) || start < minStart) buckets.delete(key);
+  }
+  if (buckets.size <= TOKEN_USAGE_BUCKET_LIMIT) return;
+  const sortedKeys = [...buckets.keys()].sort((a, b) => Number(a) - Number(b));
+  for (const key of sortedKeys.slice(0, Math.max(0, buckets.size - TOKEN_USAGE_BUCKET_LIMIT))) {
+    buckets.delete(key);
+  }
+}
+
+function recordTokenUsage(run, { at = Date.now(), input = 0, cachedInput = 0, output = 0 } = {}) {
+  const stores = ensureTokenUsageStores(run);
+  if (!stores) return;
+  const parts = tokenUsageParts(input, cachedInput, output);
+  const total = tokenUsageTotal(parts);
+  if (total <= 0) return;
+
+  const timestamp = normalizeTimestampMs(at);
+  const start = tokenUsageBucketStart(timestamp);
+  const bucket = stores.buckets.get(start) ?? {
+    start,
+    input: 0,
+    cachedInput: 0,
+    output: 0,
+  };
+  bucket.input += parts.input;
+  bucket.cachedInput += parts.cachedInput;
+  bucket.output += parts.output;
+  stores.buckets.set(start, bucket);
+  stores.events.push({
+    at: timestamp,
+    input: parts.input,
+    cachedInput: parts.cachedInput,
+    output: parts.output,
+    total,
+  });
+  pruneTokenUsageBuckets(run, start);
+}
+
+function sumTokenUsageEvents(run, sinceMs, nowMs) {
+  const events = Array.isArray(run?.tokenUsageEvents?.items) ? run.tokenUsageEvents.items : [];
+  return events.reduce((sum, event) => {
+    const at = Number(event?.at);
+    if (!Number.isFinite(at) || at < sinceMs || at > nowMs) return sum;
+    return sum + tokenUsageTotal(event);
+  }, 0);
+}
+
+function buildTokenUsageSnapshot(run, now = Date.now()) {
+  const nowMs = normalizeTimestampMs(now);
+  const currentStart = tokenUsageBucketStart(nowMs);
+  const buckets = run?.tokenUsageBuckets instanceof Map ? run.tokenUsageBuckets : new Map();
+  const chartBuckets = [];
+
+  for (let i = TOKEN_USAGE_CHART_BUCKETS - 1; i >= 0; i -= 1) {
+    const start = currentStart - (i * TOKEN_USAGE_BUCKET_MS);
+    const source = buckets.get(start) ?? {};
+    const parts = tokenUsageParts(source.input, source.cachedInput, source.output);
+    chartBuckets.push({
+      start,
+      end: start + TOKEN_USAGE_BUCKET_MS,
+      input: parts.input,
+      cachedInput: parts.cachedInput,
+      output: parts.output,
+      total: tokenUsageTotal(parts),
+    });
+  }
+
+  const lastFiveTotal = sumTokenUsageEvents(run, nowMs - TOKEN_USAGE_BUCKET_MS, nowMs);
+  const lastHourTotal = sumTokenUsageEvents(run, nowMs - (60 * 60 * 1000), nowMs);
+  const allTimeTokens = run?.tokens ? tokenUsageTotal(run.tokens) : chartBuckets.reduce((sum, bucket) => sum + bucket.total, 0);
+
+  return {
+    bucketMinutes: TOKEN_USAGE_BUCKET_MS / 60000,
+    windowMinutes: TOKEN_USAGE_CHART_BUCKETS * (TOKEN_USAGE_BUCKET_MS / 60000),
+    tpm: lastFiveTotal / (TOKEN_USAGE_BUCKET_MS / 60000),
+    tph: lastHourTotal,
+    total: allTimeTokens,
+    buckets: chartBuckets,
+  };
 }
 
 function formatUsd(value) {
@@ -1464,13 +1594,15 @@ export const INDEX_HTML = `<!doctype html>
       }
       .dashboard-sidebar {
         display: grid;
-        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-rows: auto auto auto minmax(0, 1fr);
         gap: 14px;
         min-width: 0;
         min-height: 0;
         overflow: hidden;
       }
       .dashboard-status-panel,
+      .dashboard-token-panel,
+      .dashboard-merge-panel,
       .dashboard-watchdog-panel,
       .dashboard-main {
         min-width: 0;
@@ -1492,6 +1624,23 @@ export const INDEX_HTML = `<!doctype html>
       .dashboard-watchdog-panel #cardHero {
         flex: 1 1 auto;
         min-height: 0;
+      }
+      .dashboard-token-panel {
+        display: flex;
+        flex-direction: column;
+      }
+      .dashboard-token-panel > * {
+        min-width: 0;
+      }
+      .dashboard-merge-panel {
+        display: flex;
+        flex-direction: column;
+      }
+      .dashboard-merge-panel.hidden {
+        display: none;
+      }
+      .dashboard-merge-panel > * {
+        min-width: 0;
       }
       #testGitTree {
         background: rgba(2, 6, 23, 0.35);
@@ -2081,6 +2230,110 @@ export const INDEX_HTML = `<!doctype html>
         display: flex;
         flex-wrap: wrap;
         gap: 12px;
+      }
+      .token-usage-card .card-head {
+        align-items: flex-start;
+      }
+      .token-usage-card #tokenUsageMeta {
+        flex: 0 1 auto;
+        min-width: 120px;
+        text-align: right;
+        font-size: 11px;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
+      .token-usage-body {
+        gap: 10px;
+      }
+      .token-rate-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .token-rate-item {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: rgba(2,6,23,0.35);
+        padding: 9px 10px;
+        min-width: 0;
+      }
+      .token-rate-value {
+        font-family: var(--mono);
+        font-size: 18px;
+        line-height: 1.1;
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .token-rate-label {
+        margin-top: 4px;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--muted);
+        letter-spacing: 0.6px;
+      }
+      .token-usage-bars {
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        align-items: end;
+        gap: 6px;
+        height: 92px;
+        min-height: 92px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: rgba(2,6,23,0.35);
+        padding: 9px 9px 7px;
+      }
+      .token-usage-bar {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: flex-end;
+        gap: 4px;
+        min-width: 0;
+        height: 100%;
+      }
+      .token-usage-bar-fill {
+        display: flex;
+        flex-direction: column-reverse;
+        height: var(--bar-height, 2%);
+        min-height: 2px;
+        border-radius: 5px 5px 2px 2px;
+        overflow: hidden;
+        background: rgba(148,163,184,0.18);
+      }
+      .token-usage-bar-fill.empty {
+        opacity: 0.45;
+      }
+      .token-usage-bar-segment.input {
+        background: #38bdf8;
+      }
+      .token-usage-bar-segment.cached {
+        background: #34d399;
+      }
+      .token-usage-bar-segment.output {
+        background: #fbbf24;
+      }
+      .token-usage-bar-label {
+        font-family: var(--mono);
+        font-size: 9px;
+        line-height: 1;
+        color: var(--muted);
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .merge-activity-card {
+        border-color: rgba(251,191,36,0.42);
+        background: rgba(39, 32, 12, 0.72);
+      }
+      .merge-activity-card .card-head {
+        background: rgba(251,191,36,0.08);
+      }
+      .merge-activity-card .card-text {
+        min-height: 4.5em;
+        max-height: 8em;
       }
       .card-view {
         display: flex;
@@ -2856,6 +3109,16 @@ ${renderDashboardLayout()}
       const statusElapsedEl = document.getElementById('statusElapsed');
       const statusEtaEl = document.getElementById('statusEta');
       const statusConnEl = document.getElementById('statusConn');
+      const tokenUsageMetaEl = document.getElementById('tokenUsageMeta');
+      const tokenTpmEl = document.getElementById('tokenTpm');
+      const tokenTphEl = document.getElementById('tokenTph');
+      const tokenUsageBarsEl = document.getElementById('tokenUsageBars');
+      const mergeActivityPanel = document.getElementById('mergeActivityPanel');
+      const mergeActivityCard = document.getElementById('mergeActivityCard');
+      const mergeActivityTitle = document.getElementById('mergeActivityTitle');
+      const mergeActivityTags = document.getElementById('mergeActivityTags');
+      const mergeActivityMeta = document.getElementById('mergeActivityMeta');
+      const mergeActivityText = document.getElementById('mergeActivityText');
       const fallbackEl = document.getElementById('fallback');
       const cardHero = document.getElementById('cardHero');
       const cardHeroTitle = document.getElementById('cardHeroTitle');
@@ -3698,6 +3961,29 @@ ${renderDashboardLayout()}
         return 'input ' + input + ' · output ' + output;
       }
 
+      function formatTokenNumber(value) {
+        const num = Number(value);
+        if (!Number.isFinite(num) || num < 0) return '-';
+        if (num >= 1_000_000) return (Math.round((num / 1_000_000) * 10) / 10) + 'M';
+        if (num >= 10_000) return Math.round(num / 1000) + 'k';
+        return Math.round(num).toLocaleString();
+      }
+
+      function formatTokenRate(value) {
+        const num = Number(value);
+        if (!Number.isFinite(num) || num < 0) return '-';
+        if (num > 0 && num < 10) return (Math.round(num * 10) / 10).toString();
+        return formatTokenNumber(num);
+      }
+
+      function formatTokenBucketLabel(timestamp) {
+        const date = new Date(Number(timestamp));
+        if (!Number.isFinite(date.getTime())) return '';
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return hours + ':' + minutes;
+      }
+
       function formatAgentModelLabel(agent) {
         if (!agent || typeof agent !== 'object') return '';
         const model = String(agent.lastModel ?? agent.model ?? '').trim();
@@ -3713,6 +3999,136 @@ ${renderDashboardLayout()}
 	          .replace(/</g, '&lt;')
 	          .replace(/>/g, '&gt;');
 	      }
+
+      function renderTokenUsage(run) {
+        if (!tokenUsageMetaEl || !tokenTpmEl || !tokenTphEl || !tokenUsageBarsEl) return;
+        const usage = run?.tokenUsage && typeof run.tokenUsage === 'object' ? run.tokenUsage : null;
+        const buckets = Array.isArray(usage?.buckets) ? usage.buckets : [];
+        const hasData = Boolean(usage) && (
+          Number(usage.total) > 0
+          || Number(usage.tpm) > 0
+          || Number(usage.tph) > 0
+          || buckets.some(bucket => Number(bucket?.total) > 0)
+        );
+
+        tokenTpmEl.textContent = hasData ? formatTokenRate(usage.tpm) : '-';
+        tokenTphEl.textContent = hasData ? formatTokenNumber(usage.tph) : '-';
+        tokenUsageMetaEl.textContent = hasData
+          ? ('5m buckets · total ' + formatTokenNumber(usage.total))
+          : 'No token data';
+
+        const visibleBuckets = buckets.length > 0
+          ? buckets
+          : Array.from({ length: 12 }, () => ({ start: null, input: 0, cachedInput: 0, output: 0, total: 0 }));
+        const maxTotal = Math.max(1, ...visibleBuckets.map(bucket => Number(bucket?.total) || 0));
+        tokenUsageBarsEl.innerHTML = visibleBuckets.map(bucket => {
+          const input = Math.max(0, Number(bucket?.input) || 0);
+          const cachedInput = Math.max(0, Number(bucket?.cachedInput) || 0);
+          const output = Math.max(0, Number(bucket?.output) || 0);
+          const inputTotal = Math.max(input, cachedInput);
+          const freshInput = Math.max(0, inputTotal - cachedInput);
+          const total = Math.max(0, Number(bucket?.total) || (inputTotal + output));
+          const height = Math.max(2, Math.round((total / maxTotal) * 100));
+          const label = Number.isFinite(Number(bucket?.start)) ? formatTokenBucketLabel(bucket.start) : '';
+          const title = [
+            label || 'empty bucket',
+            'total ' + formatTokenNumber(total),
+            'input ' + formatTokenNumber(input),
+            'cached ' + formatTokenNumber(cachedInput),
+            'output ' + formatTokenNumber(output),
+          ].join(' · ');
+          const segments = [
+            ['input', freshInput],
+            ['cached', cachedInput],
+            ['output', output],
+          ].filter(([, amount]) => amount > 0).map(([cls, amount]) => {
+            const basis = total > 0 ? Math.max(3, Math.round((amount / total) * 100)) : 0;
+            return '<div class="token-usage-bar-segment ' + cls + '" style="flex-basis:' + basis + '%"></div>';
+          }).join('');
+          return '<div class="token-usage-bar" title="' + escapeAttr(title) + '">' +
+            '<div class="token-usage-bar-fill' + (total > 0 ? '' : ' empty') + '" style="--bar-height:' + height + '%">' + segments + '</div>' +
+            '<div class="token-usage-bar-label">' + (label ? label.slice(3) : '-') + '</div>' +
+          '</div>';
+        }).join('');
+      }
+
+      function activeMergeAgentsForRun(run) {
+        const agents = Array.isArray(run?.agents) ? run.agents : [];
+        return agents
+          .filter(agent => deriveAgentKind(agent) === 'merge' && isActiveAgent(agent))
+          .sort((a, b) => {
+            const ta = activityTimestamp(a);
+            const tb = activityTimestamp(b);
+            if (ta !== tb) return tb - ta;
+            return String(a?.agentId ?? '').localeCompare(String(b?.agentId ?? ''));
+          });
+      }
+
+      function renderMergeActivity(run) {
+        if (!mergeActivityPanel || !mergeActivityCard) return;
+        const mergeAgents = activeMergeAgentsForRun(run);
+        const primary = mergeAgents[0] ?? null;
+        mergeActivityPanel.classList.toggle('hidden', !primary);
+        if (!primary) {
+          renderCard(
+            {
+              titleEl: mergeActivityTitle,
+              tagsEl: mergeActivityTags,
+              metaEl: mergeActivityMeta,
+              textEl: mergeActivityText,
+              rootEl: mergeActivityCard,
+            },
+            { title: 'Merge Conflict Resolution', tags: [], meta: '', text: '', hasData: false },
+          );
+          return;
+        }
+
+        const taskId = String(primary?.taskId ?? '').trim();
+        const tasks = Array.isArray(run?.tasks) ? run.tasks : [];
+        const task = taskId ? tasks.find(item => String(item?.taskId ?? '').trim() === taskId) ?? null : null;
+        const tagInfo = statusBadge(primary.status ?? 'running');
+        const tags = [
+          { text: composeStatusTag(primary.status ?? 'running', 'merge conflict'), cls: tagInfo.cls },
+        ];
+        if (mergeAgents.length > 1) tags.push({ text: String(mergeAgents.length) + ' active', cls: 'warn' });
+
+        const last = primary?.lastActivityAt ? formatAgo(primary.lastActivityAt) : '-';
+        const metaParts = ['agent: ' + String(primary.agentId ?? '-')];
+        if (taskId) metaParts.push('task: ' + taskId);
+        const worktree = primary?.worktreePath ?? task?.worktreePath ?? '';
+        if (worktree) metaParts.push('worktree: ' + worktree);
+        if (last && last !== '-') metaParts.push('updated ' + last);
+        const model = formatAgentModelLabel(primary);
+        if (model) metaParts.push(model);
+
+        renderCard(
+          {
+            titleEl: mergeActivityTitle,
+            tagsEl: mergeActivityTags,
+            metaEl: mergeActivityMeta,
+            textEl: mergeActivityText,
+            rootEl: mergeActivityCard,
+          },
+          {
+            title: buildMergeCardTitle(primary, task),
+            tags,
+            meta: metaParts.join(' · '),
+            text: clipCardText(
+              pickCardText(
+                primary?.lastPromptText,
+                primary?.summaryTextDelta,
+                primary?.lastActivity,
+                task?.lastPromptText,
+                task?.summaryTextDelta,
+                task?.lastActivity,
+                'Resolving a merge conflict for this run.',
+              ),
+              2200,
+            ),
+            hasData: true,
+          },
+        );
+      }
 
       function statusColorForTask(status) {
         const normalized = String(status ?? '').trim().toLowerCase();
@@ -5166,7 +5582,10 @@ ${renderDashboardLayout()}
         return agents.filter(agent => {
           const agentId = typeof agent?.agentId === 'string' ? agent.agentId.trim() : '';
           if (!agentId || agentId.toLowerCase() === 'server') return false;
-          return agent?.phase === phase && isActiveAgent(agent);
+          if (!isActiveAgent(agent)) return false;
+          const normalizedPhase = String(phase ?? '').trim().toLowerCase();
+          if (normalizedPhase === 'merge') return deriveAgentKind(agent) === 'merge';
+          return String(agent?.phase ?? '').trim().toLowerCase() === normalizedPhase;
         }).length;
       }
       function deriveSchedulerCounts(run) {
@@ -5408,6 +5827,17 @@ ${renderDashboardLayout()}
         if (folderLabel) parts.push('folder: ' + folderLabel);
         const clippedDescription = clipInline(description ?? '', 88);
         if (clippedDescription) parts.push(clippedDescription);
+        if (modelLabel) parts.push(modelLabel);
+        return parts.join(' - ');
+      }
+
+      function buildMergeCardTitle(agent, task) {
+        const taskId = String(agent?.taskId ?? task?.taskId ?? '').trim();
+        const parts = ['Merge Conflict Resolution'];
+        if (taskId) parts.push('task: ' + taskId);
+        const folderLabel = pathLeafLabel(agent?.worktreePath ?? task?.worktreePath ?? '', 24);
+        if (folderLabel) parts.push('folder: ' + folderLabel);
+        const modelLabel = formatAgentModelLabel(agent);
         if (modelLabel) parts.push(modelLabel);
         return parts.join(' - ');
       }
@@ -5681,6 +6111,8 @@ ${renderDashboardLayout()}
         }
         const run = state?.activeRun ?? null;
         ensureTokenCaches(run?.id);
+        renderTokenUsage(run);
+        renderMergeActivity(run);
         if (killRunBtn) {
           killRunBtn.textContent = killRunButtonText(run);
           killRunBtn.title = killRunButtonTitle(run);
@@ -6074,6 +6506,49 @@ ${renderDashboardLayout()}
           })[0];
         };
 
+        const taskById = new Map(
+          (Array.isArray(tasks) ? tasks : [])
+            .filter(task => String(task?.taskId ?? '').trim())
+            .map(task => [String(task.taskId), task]),
+        );
+
+        const mergeCards = agents
+          .filter(agent => deriveAgentKind(agent) === 'merge' && isActiveAgent(agent))
+          .map(agent => {
+            const taskId = String(agent?.taskId ?? '').trim();
+            const task = taskId ? taskById.get(taskId) ?? null : null;
+            const status = agent?.status ?? 'running';
+            const tagInfo = statusBadge(status);
+            const last = agent?.lastActivityAt ? formatAgo(agent.lastActivityAt) : '-';
+            const metaParts = [];
+            if (taskId) metaParts.push('task: ' + taskId);
+            const worktree = agent?.worktreePath ?? task?.worktreePath ?? '';
+            if (worktree) metaParts.push('worktree: ' + worktree);
+            if (last && last !== '-') metaParts.push('updated ' + last);
+            metaParts.push(formatTokenIoSummary(agent?.tokens ?? null));
+            const text = clipCardText(
+              pickCardText(
+                agent?.lastPromptText,
+                agent?.summaryTextDelta,
+                agent?.lastActivity,
+                task?.lastPromptText,
+                task?.summaryTextDelta,
+                task?.lastActivity,
+                'Resolving a merge conflict for this run.',
+              ),
+            );
+            return {
+              id: 'merge:' + (agent?.agentId ?? taskId || 'active'),
+              sortKey: '00:merge:' + (agent?.agentId ?? taskId || 'active'),
+              title: buildMergeCardTitle(agent, task),
+              tags: [{ text: composeStatusTag(status, 'merge conflict'), cls: tagInfo.cls }],
+              meta: metaParts.join('\\n'),
+              text,
+              hasData: true,
+              ts: cardTimestamp(agent, task) + 1,
+            };
+          });
+
         const taskCards = taskList
           .filter(task => String(task?.taskId ?? '').trim())
           .map(task => {
@@ -6114,13 +6589,15 @@ ${renderDashboardLayout()}
             };
           });
 
-        const cards = [...taskCards];
+        const cards = [...mergeCards, ...taskCards];
         const ordered = resolveCardOrder(cards);
         const display = CARD_STACK_MAX_ITEMS > 0 && ordered.length > CARD_STACK_MAX_ITEMS
           ? ordered.slice(0, CARD_STACK_MAX_ITEMS)
           : ordered;
 
         const hasKnownTaskCards =
+          mergeCards.length > 0
+          ||
           tasks.some(task => String(task?.taskId ?? '').trim())
           || agents.some(agent => deriveAgentKind(agent) !== 'merge' && String(agent?.taskId ?? '').trim());
         const plannedCount = Number.parseInt(run?.plannedTaskCount, 10)
@@ -9710,7 +10187,8 @@ function clipSummary(value, max = 120) {
 function summarizeRunTaskSummary(run) {
   if (!run || !(run.tasks instanceof Map)) return null;
   const tasks = [...run.tasks.values()];
-  if (tasks.length === 0) return null;
+  const agents = [...(run.agents?.values?.() ?? [])];
+  if (tasks.length === 0 && agents.length === 0) return null;
 
   const taskScore = task =>
     Number(task?.lastActivityAt ?? task?.startedAt ?? task?.finishedAt ?? 0);
@@ -9727,6 +10205,18 @@ function summarizeRunTaskSummary(run) {
     if (taskId) return taskId;
     return desc ?? null;
   };
+
+  const mergeAgents = agents.filter(agent => isMergeLikeAgent(agent) && isActiveRunAgent(agent));
+  if (mergeAgents.length > 0) {
+    const primary = pickLatest(mergeAgents);
+    const taskId = String(primary?.taskId ?? '').trim();
+    const worktree = clipSummary(primary?.worktreePath, 60);
+    const suffix = [taskId ? `task ${taskId}` : null, worktree].filter(Boolean).join(' · ');
+    const prefix = mergeAgents.length > 1
+      ? `${mergeAgents.length} merge conflict resolvers`
+      : 'merge conflict resolution';
+    return clipSummary(suffix ? `${prefix} · ${suffix}` : prefix, 120);
+  }
 
   const running = tasks.filter(task => task?.status === 'running');
   if (running.length > 0) {
@@ -9751,7 +10241,7 @@ function isCountedAgentForStats(agent) {
   const taskId = agent?.taskId;
   if (taskId !== null && taskId !== undefined && String(taskId).trim()) return true;
   const phase = String(agent?.phase ?? '').trim().toLowerCase();
-  return phase === 'task' || phase === 'merge';
+  return phase === 'task' || isMergeLikeAgent(agent);
 }
 
 const RUN_IN_FLIGHT_STAGES = new Set([
@@ -9774,6 +10264,18 @@ function isActiveRunAgent(agent) {
   if (!hasTrackableRunAgentIdentity(agent)) return false;
   const status = String(agent?.status ?? '').trim().toLowerCase();
   return status === 'running' || status === 'disposing';
+}
+
+function isMergeLikeAgent(agent) {
+  if (!hasTrackableRunAgentIdentity(agent)) return false;
+  const identity = [
+    agent?.phase,
+    agent?.agentId,
+  ]
+    .map(value => String(value ?? '').trim().toLowerCase())
+    .filter(Boolean)
+    .join(' ');
+  return identity.includes('merge') || identity.includes('conflict');
 }
 
 function countActiveRunAgentsByPhase(agents, phase) {
@@ -9803,6 +10305,7 @@ function readRunActivitySignals(run) {
     reviewAgents: countActiveRunAgentsByPhase(agents, 'review'),
     checkpointAgents: countActiveRunAgentsByPhase(agents, 'checkpoint'),
     mergeAgents: countActiveRunAgentsByPhase(agents, 'merge'),
+    mergeLikeAgents: agents.filter(agent => isMergeLikeAgent(agent) && isActiveRunAgent(agent)).length,
     hasActiveAgent: agents.some(agent => isActiveRunAgent(agent)),
   };
 }
@@ -9834,10 +10337,10 @@ function deriveRunStageFromSignals(signals) {
   const hasLiveActivity = hasLiveRunActivitySignals(signals);
 
   if (signals.status === 'disposed') return 'disposed';
-  if (signals.asksPending > 0) return 'waiting';
   if (signals.reviewAgents > 0) return 'reviewing';
   if (signals.checkpointAgents > 0) return 'validating';
-  if (signals.mergeAgents > 0) return 'merging';
+  if (signals.mergeAgents > 0 || signals.mergeLikeAgents > 0) return 'merging';
+  if (signals.asksPending > 0) return 'waiting';
   if (signals.status === 'running' || hasActiveExecution) return 'running';
   if (!terminalStatus && hasQueuedWork) return 'queued';
   if (signals.status === 'blocked') return 'blocked';
@@ -10054,6 +10557,8 @@ export class CdxStatsServer {
     run.workerBusy = workerCount;
     run.costUsd = 0;
     run.tokens = { input: 0, cachedInput: 0, output: 0 };
+    run.tokenUsageBuckets = new Map();
+    run.tokenUsageEvents = new RingBuffer(2000);
     run.tasks = new Map();
     run.asks = new Map();
     run.workers = new Map();
@@ -10231,6 +10736,58 @@ export class CdxStatsServer {
 
       addLog(agentId, `started ${taskId}`);
       addLog(agentId, `processing git tree nodes for ${taskId}`);
+    }
+
+    const addTokenSample = ({ agentId, taskId = null, at, input, cachedInput, output }) => {
+      const parts = tokenUsageParts(input, cachedInput, output);
+      recordTokenUsage(run, { at, ...parts });
+      run.tokens.input += parts.input;
+      run.tokens.cachedInput += parts.cachedInput;
+      run.tokens.output += parts.output;
+      const agent = run.agents.get(agentId);
+      if (agent) {
+        if (!agent.tokens) agent.tokens = { input: 0, cachedInput: 0, output: 0 };
+        agent.tokens.input += parts.input;
+        agent.tokens.cachedInput += parts.cachedInput;
+        agent.tokens.output += parts.output;
+      }
+      if (taskId) {
+        const task = run.tasks.get(taskId);
+        if (task) {
+          if (!task.tokens) task.tokens = { input: 0, cachedInput: 0, output: 0 };
+          task.tokens.input += parts.input;
+          task.tokens.cachedInput += parts.cachedInput;
+          task.tokens.output += parts.output;
+        }
+      }
+    };
+
+    addTokenSample({
+      agentId: 'planner',
+      at: now - 58 * 60 * 1000,
+      input: 18000,
+      cachedInput: 4200,
+      output: 3600,
+    });
+    addTokenSample({
+      agentId: 'watchdog',
+      at: now - 9 * 60 * 1000,
+      input: 7400,
+      cachedInput: 2100,
+      output: 1400,
+    });
+    for (let i = 1; i <= workerCount; i += 1) {
+      const n = String(i).padStart(2, '0');
+      const taskId = `worker-${n}`;
+      const ageMs = Math.max(30_000, (workerCount - i + 1) * 90_000);
+      addTokenSample({
+        agentId: `task:${taskId}`,
+        taskId,
+        at: now - ageMs,
+        input: 2800 + (i * 170),
+        cachedInput: 600 + (i * 35),
+        output: 900 + (i * 55),
+      });
     }
 
     const pushEvent = payload => {
@@ -10928,6 +11485,12 @@ export class CdxStatsServer {
       run.tokens.input += deltaInput;
       run.tokens.cachedInput += deltaCached;
       run.tokens.output += deltaOutput;
+      recordTokenUsage(run, {
+        at: eventEntry.ts,
+        input: deltaInput,
+        cachedInput: deltaCached,
+        output: deltaOutput,
+      });
       if (deltaUsd !== null) {
         run.costUsd = (Number.isFinite(run.costUsd) ? run.costUsd : 0) + deltaUsd;
       }
@@ -11467,6 +12030,7 @@ export class CdxStatsServer {
         const missingTasks = Math.max(0, tasksTotal - tasks.length);
         const counts = {
           agentsRunning: countedAgents.filter(agent => agent.status === 'running' || agent.status === 'disposing').length,
+          mergeAgentsRunning: agents.filter(agent => isMergeLikeAgent(agent) && isActiveRunAgent(agent)).length,
           tasksPending: knownPending + missingTasks,
           tasksRunning: tasks.filter(task => task.status === 'running').length,
           tasksSuperseded: tasks.filter(task => task.status === 'superseded').length,
@@ -11669,6 +12233,7 @@ export class CdxStatsServer {
       agentsTotal: countedAgents.length,
       agentsRunning: countedAgents.filter(agent => agent.status === 'running' || agent.status === 'disposing').length,
       agentsDisposed: countedAgents.filter(agent => agent.status === 'disposed').length,
+      mergeAgentsRunning: agents.filter(agent => isMergeLikeAgent(agent) && isActiveRunAgent(agent)).length,
       tasksTotal,
       tasksPending: knownPending + missingTasks,
       tasksRunning: tasks.filter(t => t.status === 'running').length,
@@ -11689,6 +12254,7 @@ export class CdxStatsServer {
 
     const tokens = run.tokens ?? null;
     const costUsd = Number.isFinite(run.costUsd) ? run.costUsd : null;
+    const tokenUsage = buildTokenUsageSnapshot(run);
     const scoutOutputTail = buildTaskOutputTail(run.logs.get('scout')?.items ?? [], {
       maxLines: PRE_TASK_OUTPUT_TAIL_LINES,
       maxCharsPerLine: PRE_TASK_OUTPUT_TAIL_CHARS,
@@ -11768,6 +12334,7 @@ export class CdxStatsServer {
       checklist,
       counts,
       tokens,
+      tokenUsage,
       costUsd,
       scheduler: run.scheduler ?? null,
       workers: [...(run.workers?.values?.() ?? [])].sort((a, b) =>
@@ -12974,6 +13541,8 @@ export class CdxStatsServer {
       workers: new Map(),
       costUsd: 0,
       tokens: { input: 0, cachedInput: 0, output: 0 },
+      tokenUsageBuckets: new Map(),
+      tokenUsageEvents: new RingBuffer(2000),
       tasks: new Map(),
       asks: new Map(),
       agents: new Map([

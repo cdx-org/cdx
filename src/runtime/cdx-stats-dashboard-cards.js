@@ -112,6 +112,43 @@ export function renderCardViewSection() {
         </div>`;
 }
 
+export function renderTokenUsageCard() {
+  return `
+        <div id="tokenUsageCard" class="card card-flex token-usage-card">
+          <div class="card-head">
+            <div class="card-title">Token Usage</div>
+            <div id="tokenUsageMeta" class="mono muted">No token data</div>
+          </div>
+          <div class="card-body token-usage-body">
+            <div class="token-rate-grid">
+              <div class="token-rate-item">
+                <div id="tokenTpm" class="token-rate-value">-</div>
+                <div class="token-rate-label">TPM</div>
+              </div>
+              <div class="token-rate-item">
+                <div id="tokenTph" class="token-rate-value">-</div>
+                <div class="token-rate-label">TPH</div>
+              </div>
+            </div>
+            <div id="tokenUsageBars" class="token-usage-bars" aria-label="5 minute token usage"></div>
+          </div>
+        </div>`;
+}
+
+export function renderMergeActivityCard() {
+  return `
+        <div id="mergeActivityCard" class="card card-flex merge-activity-card">
+          <div class="card-head">
+            <div id="mergeActivityTitle" class="card-title">Merge Conflict Resolution</div>
+            <div id="mergeActivityTags" class="card-tags"></div>
+          </div>
+          <div class="card-body">
+            <div id="mergeActivityMeta" class="card-meta"></div>
+            <div id="mergeActivityText" class="card-text mono"></div>
+          </div>
+        </div>`;
+}
+
 export function renderTaskStackSection() {
   return `
         <div id="taskStackView" class="card-view card-view-stack">
@@ -230,6 +267,12 @@ export function renderDashboardLayout() {
       <div class="dashboard-sidebar">
         <div class="dashboard-status-panel">
 ${renderStatsOverviewCard()}
+        </div>
+        <div class="dashboard-token-panel">
+${renderTokenUsageCard()}
+        </div>
+        <div id="mergeActivityPanel" class="dashboard-merge-panel hidden">
+${renderMergeActivityCard()}
         </div>
         <div class="dashboard-watchdog-panel">
 ${renderCardViewSection()}

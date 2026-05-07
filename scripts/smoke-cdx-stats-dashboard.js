@@ -197,6 +197,17 @@ export async function runCdxStatsDashboardSmoke({
     const requiredIds = [
       'statusRun',
       'statusWait',
+      'tokenUsageCard',
+      'tokenUsageMeta',
+      'tokenTpm',
+      'tokenTph',
+      'tokenUsageBars',
+      'mergeActivityPanel',
+      'mergeActivityCard',
+      'mergeActivityTitle',
+      'mergeActivityTags',
+      'mergeActivityMeta',
+      'mergeActivityText',
       'cardHeroTitle',
       'agents',
       'tasks',
@@ -218,8 +229,13 @@ export async function runCdxStatsDashboardSmoke({
 
     const requiredCssSelectors = [
       '.dashboard-sidebar',
+      '.dashboard-token-panel',
+      '.dashboard-merge-panel',
       '.dashboard-main',
       '.card-flex',
+      '.token-rate-grid',
+      '.token-usage-bars',
+      '.merge-activity-card',
       '.body-scroll',
       '.panel',
       '.worktree-pane',
@@ -241,6 +257,8 @@ export async function runCdxStatsDashboardSmoke({
       const newLayoutClasses = [
         'dashboard-layout',
         'dashboard-sidebar',
+        'dashboard-token-panel',
+        'dashboard-merge-panel',
         'dashboard-watchdog-panel',
         'dashboard-main',
       ];

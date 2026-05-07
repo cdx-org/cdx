@@ -15,8 +15,13 @@ const VALID_HTML = `
     <title>CDX Stats</title>
     <style>
       .dashboard-sidebar {}
+      .dashboard-token-panel {}
+      .dashboard-merge-panel {}
       .dashboard-main {}
       .card-flex {}
+      .token-rate-grid {}
+      .token-usage-bars {}
+      .merge-activity-card {}
       .body-scroll {}
       .panel {}
       .worktree-pane {}
@@ -24,10 +29,21 @@ const VALID_HTML = `
     </style>
   </head>
   <body class="layout dashboard-layout body-scroll">
-    <section class="card dashboard-sidebar dashboard-watchdog-panel"></section>
+    <section class="card dashboard-sidebar dashboard-token-panel dashboard-merge-panel dashboard-watchdog-panel"></section>
     <main class="card dashboard-main"></main>
     <div id="statusRun"></div>
     <div id="statusWait"></div>
+    <div id="tokenUsageCard"></div>
+    <div id="tokenUsageMeta"></div>
+    <div id="tokenTpm"></div>
+    <div id="tokenTph"></div>
+    <div id="tokenUsageBars"></div>
+    <div id="mergeActivityPanel"></div>
+    <div id="mergeActivityCard"></div>
+    <div id="mergeActivityTitle"></div>
+    <div id="mergeActivityTags"></div>
+    <div id="mergeActivityMeta"></div>
+    <div id="mergeActivityText"></div>
     <div id="cardHeroTitle"></div>
     <div id="agents"></div>
     <div id="tasks"></div>
@@ -62,6 +78,10 @@ test('parseArgs accepts verbose and require-new-layout flags', () => {
 
 test('HTML helpers detect expected ids and classes', () => {
   assert.equal(hasId(VALID_HTML, 'statusRun'), true);
+  assert.equal(hasId(VALID_HTML, 'tokenUsageBars'), true);
+  assert.equal(hasClassAttribute(VALID_HTML, 'dashboard-token-panel'), true);
+  assert.equal(hasId(VALID_HTML, 'mergeActivityCard'), true);
+  assert.equal(hasClassAttribute(VALID_HTML, 'dashboard-merge-panel'), true);
   assert.equal(hasClassAttribute(VALID_HTML, 'dashboard-watchdog-panel'), true);
   assert.equal(hasClassAttribute(VALID_HTML, 'missing-class'), false);
 });
