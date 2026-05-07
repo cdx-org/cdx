@@ -7,6 +7,7 @@ import {
   parseArgs,
   runCdxStatsDashboardSmoke,
 } from '../../scripts/smoke-cdx-stats-dashboard.js';
+import { INDEX_HTML } from '../../src/runtime/cdx-stats-server.js';
 
 const VALID_HTML = `
 <!doctype html>
@@ -84,6 +85,16 @@ test('HTML helpers detect expected ids and classes', () => {
   assert.equal(hasClassAttribute(VALID_HTML, 'dashboard-merge-panel'), true);
   assert.equal(hasClassAttribute(VALID_HTML, 'dashboard-watchdog-panel'), true);
   assert.equal(hasClassAttribute(VALID_HTML, 'missing-class'), false);
+});
+
+test('rendered stats dashboard inline scripts parse as JavaScript', () => {
+  const scripts = [...INDEX_HTML.matchAll(/<script>\s*([\s\S]*?)\s*<\/script>/gi)]
+    .map(match => match[1])
+    .filter(Boolean);
+  assert.ok(scripts.length > 0);
+  for (const script of scripts) {
+    assert.doesNotThrow(() => new Function(script));
+  }
 });
 
 test('runCdxStatsDashboardSmoke validates the rendered dashboard markup', async () => {

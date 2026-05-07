@@ -2,7 +2,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFile, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import net from 'node:net';
@@ -96,9 +96,26 @@ const BACKGROUND_BACKEND_PROBE_INTERVAL_MS = Math.max(
   50,
   Number.parseInt(process.env.CDX_RUN_BACKEND_PROBE_INTERVAL_MS ?? '150', 10) || 150,
 );
+const BACKGROUND_BACKEND_REGISTRY_PREFIX = 'mcp-cdx-run-backend-';
+const BACKGROUND_BACKEND_REGISTRY_SUFFIX = '.json';
+
+function defaultBackgroundBackendRegistryOwner() {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (Number.isInteger(uid)) return String(uid);
+  if (process.platform === 'win32') return 'win32';
+  return String(process.pid);
+}
+
+function defaultBackgroundBackendRegistryPath() {
+  return path.join(
+    tmpdir(),
+    `${BACKGROUND_BACKEND_REGISTRY_PREFIX}${defaultBackgroundBackendRegistryOwner()}${BACKGROUND_BACKEND_REGISTRY_SUFFIX}`,
+  );
+}
+
 const BACKGROUND_BACKEND_REGISTRY_PATH = path.resolve(
   process.env.CDX_RUN_BACKEND_REGISTRY_PATH
-  ?? path.join(tmpdir(), `mcp-cdx-run-backend-${process.getuid?.() ?? process.pid}.json`),
+  ?? defaultBackgroundBackendRegistryPath(),
 );
 const RUN_JOURNAL_ENABLED = coerceBoolean(process.env.CDX_RUN_JOURNAL_ENABLED) ?? IS_BACKGROUND_BACKEND_PROCESS;
 const RUN_JOURNAL_PATH = path.resolve(
@@ -1015,12 +1032,21 @@ async function pathExists(targetPath) {
 async function hasPersistedBackgroundRecoveryState({
   registryPath = BACKGROUND_BACKEND_REGISTRY_PATH,
   journalPath = RUN_JOURNAL_PATH,
+  runId = null,
 } = {}) {
   const [hasRegistry, hasJournal] = await Promise.all([
     pathExists(registryPath),
     pathExists(journalPath),
   ]);
-  return hasRegistry || hasJournal;
+  if (hasRegistry || hasJournal) return true;
+
+  const candidates = await discoverBackgroundBackendRegistries({
+    registryPath,
+    journalPath,
+    runId,
+    includePreferred: false,
+  });
+  return candidates.length > 0;
 }
 
 function normalizeBackgroundBackendRegistry(value) {
@@ -1055,6 +1081,97 @@ async function readBackgroundBackendRegistry(registryPath = BACKGROUND_BACKEND_R
   } catch {
     return null;
   }
+}
+
+function isBackgroundBackendRegistryFileName(name) {
+  return typeof name === 'string'
+    && name.startsWith(BACKGROUND_BACKEND_REGISTRY_PREFIX)
+    && name.endsWith(BACKGROUND_BACKEND_REGISTRY_SUFFIX)
+    && !name.endsWith(`${BACKGROUND_BACKEND_REGISTRY_SUFFIX}.runs.json`)
+    && !name.includes('.tmp');
+}
+
+function runJournalPathForRegistry(registryPath, { preferredRegistryPath = null, preferredJournalPath = null } = {}) {
+  const normalizedRegistryPath = path.resolve(registryPath);
+  if (
+    preferredRegistryPath
+    && preferredJournalPath
+    && path.resolve(preferredRegistryPath) === normalizedRegistryPath
+  ) {
+    return path.resolve(preferredJournalPath);
+  }
+  return `${normalizedRegistryPath}.runs.json`;
+}
+
+async function runJournalContainsRunId(journalPath, runId) {
+  const safeRunId = coerceString(runId, 400);
+  if (!safeRunId) return false;
+  const journal = await readRunJournal(journalPath);
+  return Array.isArray(journal?.runs) && journal.runs.some(entry => entry?.runId === safeRunId);
+}
+
+async function discoverBackgroundBackendRegistries({
+  registryPath = BACKGROUND_BACKEND_REGISTRY_PATH,
+  journalPath = RUN_JOURNAL_PATH,
+  runId = null,
+  includePreferred = true,
+} = {}) {
+  const preferredRegistryPath = path.resolve(registryPath);
+  const safeRunId = coerceString(runId, 400);
+  const paths = [];
+  const addPath = candidatePath => {
+    if (!candidatePath || typeof candidatePath !== 'string') return;
+    paths.push(path.resolve(candidatePath));
+  };
+
+  if (includePreferred) addPath(preferredRegistryPath);
+
+  try {
+    const entries = await readdir(path.dirname(preferredRegistryPath), { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry?.isFile?.()) continue;
+      if (!isBackgroundBackendRegistryFileName(entry.name)) continue;
+      addPath(path.join(path.dirname(preferredRegistryPath), entry.name));
+    }
+  } catch {}
+
+  const seen = new Set();
+  const candidates = [];
+  for (const candidatePath of paths) {
+    if (seen.has(candidatePath)) continue;
+    seen.add(candidatePath);
+
+    const registry = await readBackgroundBackendRegistry(candidatePath);
+    if (!registry) continue;
+
+    const candidateJournalPath = runJournalPathForRegistry(candidatePath, {
+      preferredRegistryPath,
+      preferredJournalPath: journalPath,
+    });
+    const hasRun = safeRunId
+      ? await runJournalContainsRunId(candidateJournalPath, safeRunId)
+      : false;
+    let mtimeMs = 0;
+    try {
+      mtimeMs = (await stat(candidatePath)).mtimeMs;
+    } catch {}
+
+    candidates.push({
+      ...registry,
+      registryPath: candidatePath,
+      journalPath: candidateJournalPath,
+      hasRun,
+      isPreferred: candidatePath === preferredRegistryPath,
+      mtimeMs,
+    });
+  }
+
+  candidates.sort((a, b) => {
+    if (safeRunId && a.hasRun !== b.hasRun) return a.hasRun ? -1 : 1;
+    if (!safeRunId && a.isPreferred !== b.isPreferred) return a.isPreferred ? -1 : 1;
+    return (b.startedAt ?? b.mtimeMs ?? 0) - (a.startedAt ?? a.mtimeMs ?? 0);
+  });
+  return candidates;
 }
 
 async function writeBackgroundBackendRegistry(registry, registryPath = BACKGROUND_BACKEND_REGISTRY_PATH) {
@@ -17436,13 +17553,29 @@ class CdxAppServerMcpServer {
     }
   }
 
-  async #ensureBackgroundBackendAvailable({ autoStart = true } = {}) {
+  async #ensureBackgroundBackendAvailable({ autoStart = true, runId = null } = {}) {
     if (!BACKGROUND_BACKEND_ENABLED || IS_BACKGROUND_BACKEND_PROCESS) return null;
 
-    const candidates = [
-      normalizeBackgroundBackendRegistry(this.backgroundBackendRegistry),
-      await readBackgroundBackendRegistry(),
-    ].filter(Boolean);
+    const safeRunId = coerceString(runId, 400);
+    const remembered = normalizeBackgroundBackendRegistry(this.backgroundBackendRegistry);
+    const discovered = await discoverBackgroundBackendRegistries({
+      registryPath: BACKGROUND_BACKEND_REGISTRY_PATH,
+      journalPath: this.runJournalPath,
+      runId: safeRunId,
+    });
+    const candidates = [];
+    const seen = new Set();
+    const addCandidate = candidate => {
+      if (!candidate) return;
+      const key = path.resolve(candidate.registryPath ?? '');
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      candidates.push(candidate);
+    };
+
+    if (!safeRunId) addCandidate(remembered);
+    for (const candidate of discovered) addCandidate(candidate);
+    if (safeRunId) addCandidate(remembered);
 
     for (const candidate of candidates) {
       const reachable = await probeTcpEndpoint({
@@ -17497,7 +17630,10 @@ class CdxAppServerMcpServer {
   async #proxyBackgroundToolCall(name, args, { autoStart = true } = {}) {
     if (!BACKGROUND_BACKEND_ENABLED || IS_BACKGROUND_BACKEND_PROCESS) return null;
 
-    let registry = await this.#ensureBackgroundBackendAvailable({ autoStart });
+    const targetRunId = isObject(args)
+      ? coerceString(args.runId ?? args.run_id, 400)
+      : null;
+    let registry = await this.#ensureBackgroundBackendAvailable({ autoStart, runId: targetRunId });
     if (!registry) return null;
 
     const invoke = async target => {
@@ -17513,7 +17649,7 @@ class CdxAppServerMcpServer {
     } catch (error) {
       this.backgroundBackendRegistry = null;
       if (!autoStart) return null;
-      registry = await this.#ensureBackgroundBackendAvailable({ autoStart: true });
+      registry = await this.#ensureBackgroundBackendAvailable({ autoStart: true, runId: targetRunId });
       if (!registry) throw error;
       return await invoke(registry);
     }
@@ -17993,6 +18129,7 @@ class CdxAppServerMcpServer {
             const autoStart = await hasPersistedBackgroundRecoveryState({
               registryPath: BACKGROUND_BACKEND_REGISTRY_PATH,
               journalPath: this.runJournalPath,
+              runId,
             });
             const proxied = await this.#proxyBackgroundToolCall('cdx.status', {
               runId,
@@ -18449,6 +18586,7 @@ class CdxAppServerMcpServer {
 	      const autoStart = await hasPersistedBackgroundRecoveryState({
 	        registryPath: BACKGROUND_BACKEND_REGISTRY_PATH,
 	        journalPath: this.runJournalPath,
+	        runId: sourceRunId,
 	      });
 	      const proxied = await this.#proxyBackgroundToolResponse(id, 'cdx.resume', input, {
 	        autoStart,
@@ -20819,6 +20957,7 @@ class CdxAppServerMcpServer {
       const autoStart = await hasPersistedBackgroundRecoveryState({
         registryPath: BACKGROUND_BACKEND_REGISTRY_PATH,
         journalPath: this.runJournalPath,
+        runId,
       });
       const proxied = await this.#proxyBackgroundToolResponse(id, 'cdx.status', input, {
         autoStart,

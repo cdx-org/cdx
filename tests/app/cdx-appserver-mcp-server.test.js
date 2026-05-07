@@ -1406,6 +1406,149 @@ test('cdx status can revive detached backend journal state after backend exit an
 	  }
 	});
 
+test('cdx status discovers legacy pid-scoped detached backend registry after frontend restart', { timeout: 50_000 }, async () => {
+  const serverPath = path.join(TEST_PROJECT_ROOT, 'src', 'cli', 'cdx-appserver-mcp-server.js');
+  const stubPath = path.join(TEST_PROJECT_ROOT, 'tests', 'app', 'fixtures', 'stubs', 'appserver-stub.js');
+  const detachedRoot = await mkdtemp(path.join(os.tmpdir(), 'cdx-detached-discovery-test-'));
+  const detachedRepoRoot = path.join(detachedRoot, 'repo');
+  const legacyRegistryPath = path.join(detachedRoot, 'mcp-cdx-run-backend-legacy.json');
+  const legacyJournalPath = `${legacyRegistryPath}.runs.json`;
+  const currentRegistryPath = path.join(detachedRoot, 'mcp-cdx-run-backend-win32.json');
+  const currentJournalPath = `${currentRegistryPath}.runs.json`;
+
+  await initRepo(detachedRepoRoot);
+
+  let firstServer = null;
+  let firstReader = null;
+  let secondServer = null;
+  let secondReader = null;
+  let backendPid = null;
+
+  const serverEnv = (registryPath, journalPath) => ({
+    CODEX_BIN: 'node',
+    CODEX_APP_SERVER_ARGS: JSON.stringify([stubPath]),
+    APP_SERVER_STUB_DELAY_MS: '15000',
+    CDX_WORKTREE_ROOT: path.join(detachedRoot, 'worktrees'),
+    CDX_MAX_PARALLELISM: '1',
+    CDX_EVENT_STREAM: '0',
+    CDX_STREAM_EVENTS: '0',
+    CDX_STATS_AUTO_OPEN: '0',
+    CDX_BACKGROUND_BACKEND_ENABLED: '1',
+    CDX_RUN_BACKEND_REGISTRY_PATH: registryPath,
+    CDX_RUN_JOURNAL_PATH: journalPath,
+    CDX_RUN_BACKEND_START_TIMEOUT_MS: '5000',
+  });
+
+  try {
+    firstServer = createProcess('node', [serverPath], {
+      cwd: detachedRoot,
+      env: serverEnv(legacyRegistryPath, legacyJournalPath),
+    });
+    firstReader = createMessageReader(firstServer);
+
+    const firstInitRequest = {
+      jsonrpc: '2.0',
+      id: nextId(),
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        clientInfo: { name: 'detached-discovery-first-client', version: '0.0.1' },
+      },
+    };
+    await sendRequest(firstServer, firstInitRequest);
+    await firstReader.next(msg => msg.id === firstInitRequest.id, 5000);
+
+    const spawnRequest = {
+      jsonrpc: '2.0',
+      id: nextId(),
+      method: 'tools/call',
+      params: {
+        name: 'spawn',
+        arguments: {
+          prompt: 'Ship a minimal demo',
+          repoRoot: detachedRepoRoot,
+          maxParallelism: 1,
+        },
+      },
+    };
+    await sendRequest(firstServer, spawnRequest);
+    const spawnResponse = await firstReader.next(msg => msg.id === spawnRequest.id, 30_000);
+    const spawnResult = assertToolCallResultContract(spawnResponse.result, {
+      requireStructuredContent: true,
+    });
+    const spawnStructured = getToolCallStructuredContent(spawnResult);
+    const runId = typeof spawnStructured?.runId === 'string' ? spawnStructured.runId : null;
+    assert.ok(runId);
+
+    await waitForCondition(async () => {
+      const journal = JSON.parse(await readFile(legacyJournalPath, 'utf8'));
+      return Array.isArray(journal?.runs) && journal.runs.some(entry => entry?.runId === runId)
+        ? journal
+        : null;
+    }, {
+      timeoutMs: 10_000,
+      intervalMs: 100,
+      label: 'legacy journaled detached run',
+    });
+
+    const legacyRegistry = JSON.parse(await readFile(legacyRegistryPath, 'utf8'));
+    backendPid = Number.parseInt(String(legacyRegistry?.pid ?? ''), 10);
+    assert.ok(Number.isInteger(backendPid) && backendPid > 0);
+
+    await stopProcess(firstServer);
+    firstServer = null;
+
+    secondServer = createProcess('node', [serverPath], {
+      cwd: detachedRoot,
+      env: serverEnv(currentRegistryPath, currentJournalPath),
+    });
+    secondReader = createMessageReader(secondServer);
+
+    const secondInitRequest = {
+      jsonrpc: '2.0',
+      id: nextId(),
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        clientInfo: { name: 'detached-discovery-second-client', version: '0.0.1' },
+      },
+    };
+    await sendRequest(secondServer, secondInitRequest);
+    await secondReader.next(msg => msg.id === secondInitRequest.id, 5000);
+
+    const statusRequest = {
+      jsonrpc: '2.0',
+      id: nextId(),
+      method: 'tools/call',
+      params: {
+        name: 'status',
+        arguments: {
+          runId,
+          includeTasks: true,
+          includeAgents: false,
+          includeAsks: true,
+        },
+      },
+    };
+    await sendRequest(secondServer, statusRequest);
+    const statusResponse = await secondReader.next(msg => msg.id === statusRequest.id, 30_000);
+    const statusResult = assertToolCallResultContract(statusResponse.result, {
+      requireStructuredContent: true,
+    });
+    const statusStructured = getToolCallStructuredContent(statusResult);
+
+    assert.equal(statusStructured?.runId, runId);
+    assert.notEqual(statusStructured?.status, 'unknown');
+    assert.ok(['running', 'completed'].includes(statusStructured?.status));
+    assert.ok(Array.isArray(statusStructured?.tasks));
+  } finally {
+    await stopProcess(firstServer);
+    await stopProcess(secondServer);
+    await stopDetachedProcess(backendPid);
+    await removeDirWithRetry(detachedRoot);
+  }
+});
+
 test('cdx resume can restart an orphaned detached run and persist old/new run linkage', { timeout: 50_000 }, async () => {
   const serverPath = path.join(TEST_PROJECT_ROOT, 'src', 'cli', 'cdx-appserver-mcp-server.js');
   const stubPath = path.join(TEST_PROJECT_ROOT, 'tests', 'app', 'fixtures', 'stubs', 'appserver-stub.js');

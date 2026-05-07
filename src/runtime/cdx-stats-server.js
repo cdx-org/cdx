@@ -6538,8 +6538,8 @@ ${renderDashboardLayout()}
               ),
             );
             return {
-              id: 'merge:' + (agent?.agentId ?? taskId || 'active'),
-              sortKey: '00:merge:' + (agent?.agentId ?? taskId || 'active'),
+              id: 'merge:' + ((agent?.agentId ?? taskId) || 'active'),
+              sortKey: '00:merge:' + ((agent?.agentId ?? taskId) || 'active'),
               title: buildMergeCardTitle(agent, task),
               tags: [{ text: composeStatusTag(status, 'merge conflict'), cls: tagInfo.cls }],
               meta: metaParts.join('\\n'),
