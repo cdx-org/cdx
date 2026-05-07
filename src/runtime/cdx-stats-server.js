@@ -169,6 +169,81 @@ function tokenUsageParts(input, cachedInput, output) {
   };
 }
 
+function readTextTokenUsageParts(usage) {
+  if (!isObject(usage)) return null;
+  const inputTokens = readTokenCount(usage, 'inputTokens', 'input_tokens', 'prompt_tokens', 'promptTokens');
+  const cachedInputTokens = readTokenCount(
+    usage,
+    'cachedInputTokens',
+    'cached_input_tokens',
+    'cached_tokens',
+    'input_tokens_details.cached_tokens',
+    'prompt_tokens_details.cached_tokens',
+  );
+  const outputTokens = readTokenCount(usage, 'outputTokens', 'output_tokens', 'completion_tokens', 'completionTokens');
+  if (inputTokens === null && cachedInputTokens === null && outputTokens === null) return null;
+  return tokenUsageParts(inputTokens ?? 0, cachedInputTokens ?? 0, outputTokens ?? 0);
+}
+
+function subtractTokenUsageParts(current, previous) {
+  if (!isObject(current)) return null;
+  if (!isObject(previous)) return tokenUsageParts(current.input, current.cachedInput, current.output);
+  return tokenUsageParts(
+    Math.max(0, (Number(current.input) || 0) - (Number(previous.input) || 0)),
+    Math.max(0, (Number(current.cachedInput) || 0) - (Number(previous.cachedInput) || 0)),
+    Math.max(0, (Number(current.output) || 0) - (Number(previous.output) || 0)),
+  );
+}
+
+function ensureTokenUsageThreadStores(run) {
+  if (!run || !isObject(run)) return null;
+  if (!(run.tokenUsageThreadTotals instanceof Map)) run.tokenUsageThreadTotals = new Map();
+  if (!(run.tokenUsageNotificationKeys instanceof Set)) run.tokenUsageNotificationKeys = new Set();
+  return {
+    threadTotals: run.tokenUsageThreadTotals,
+    notificationKeys: run.tokenUsageNotificationKeys,
+  };
+}
+
+function readAppserverNotificationTokenUsageParts(method, params, run) {
+  if (method !== 'thread/tokenUsage/updated') return null;
+  const usage = isObject(params?.tokenUsage)
+    ? params.tokenUsage
+    : (isObject(params?.token_usage) ? params.token_usage : null);
+  if (!usage) return null;
+  const stores = ensureTokenUsageThreadStores(run);
+  const threadId = pickFirstString(params?.threadId, params?.thread_id, usage.threadId, usage.thread_id);
+  const turnId = pickFirstString(params?.turnId, params?.turn_id, usage.turnId, usage.turn_id);
+  const total = readTextTokenUsageParts(usage.total);
+  const last = isObject(usage.last) ? usage.last : null;
+  const delta = isObject(usage.delta) ? usage.delta : null;
+  const deltaParts = readTextTokenUsageParts(delta);
+  if (deltaParts) return deltaParts;
+
+  if (total && stores && threadId) {
+    const previousTotal = stores.threadTotals.get(threadId) ?? null;
+    stores.threadTotals.set(threadId, total);
+    if (!previousTotal) return total;
+    if (tokenUsageTotal(total) < tokenUsageTotal(previousTotal)) return total;
+    return subtractTokenUsageParts(total, previousTotal);
+  }
+
+  const lastParts = readTextTokenUsageParts(last);
+  if (!lastParts) return null;
+  if (!stores || (!threadId && !turnId)) return lastParts;
+
+  const key = [
+    threadId ?? 'thread',
+    turnId ?? 'turn',
+    lastParts.input,
+    lastParts.cachedInput,
+    lastParts.output,
+  ].join('|');
+  if (stores.notificationKeys.has(key)) return tokenUsageParts(0, 0, 0);
+  stores.notificationKeys.add(key);
+  return lastParts;
+}
+
 function tokenUsageTotal(parts) {
   if (!isObject(parts)) return 0;
   const input = Math.max(Number(parts.input) || 0, Number(parts.cachedInput) || 0);
@@ -230,6 +305,24 @@ function recordTokenUsage(run, { at = Date.now(), input = 0, cachedInput = 0, ou
   pruneTokenUsageBuckets(run, start);
 }
 
+function addTokenUsagePartsToRecord(record, parts) {
+  if (!record || !isObject(parts)) return;
+  if (!record.tokens) record.tokens = { input: 0, cachedInput: 0, output: 0 };
+  record.tokens.input += Math.max(0, Number(parts.input) || 0);
+  record.tokens.cachedInput += Math.max(0, Number(parts.cachedInput) || 0);
+  record.tokens.output += Math.max(0, Number(parts.output) || 0);
+}
+
+function tokenUsageTotalFromRecords(records) {
+  if (!Array.isArray(records)) return 0;
+  let total = 0;
+  for (const record of records) {
+    if (!record?.tokens) continue;
+    total += tokenUsageTotal(record.tokens);
+  }
+  return total;
+}
+
 function sumTokenUsageEvents(run, sinceMs, nowMs) {
   const events = Array.isArray(run?.tokenUsageEvents?.items) ? run.tokenUsageEvents.items : [];
   return events.reduce((sum, event) => {
@@ -261,7 +354,15 @@ function buildTokenUsageSnapshot(run, now = Date.now()) {
 
   const lastFiveTotal = sumTokenUsageEvents(run, nowMs - TOKEN_USAGE_BUCKET_MS, nowMs);
   const lastHourTotal = sumTokenUsageEvents(run, nowMs - (60 * 60 * 1000), nowMs);
-  const allTimeTokens = run?.tokens ? tokenUsageTotal(run.tokens) : chartBuckets.reduce((sum, bucket) => sum + bucket.total, 0);
+  const agentRecords = run?.agents instanceof Map ? [...run.agents.values()] : [];
+  const taskRecords = run?.tasks instanceof Map ? [...run.tasks.values()] : [];
+  const aggregateRecordsTotal = Math.max(
+    tokenUsageTotalFromRecords(agentRecords),
+    tokenUsageTotalFromRecords(taskRecords),
+  );
+  const allTimeTokens = run?.tokens
+    ? tokenUsageTotal(run.tokens)
+    : aggregateRecordsTotal || chartBuckets.reduce((sum, bucket) => sum + bucket.total, 0);
 
   return {
     bucketMinutes: TOKEN_USAGE_BUCKET_MS / 60000,
@@ -4000,9 +4101,41 @@ ${renderDashboardLayout()}
 	          .replace(/>/g, '&gt;');
 	      }
 
+      function tokenPartsTotal(parts) {
+        if (!parts || typeof parts !== 'object') return 0;
+        const input = Math.max(Number(parts.input) || 0, Number(parts.cachedInput) || 0);
+        const output = Math.max(0, Number(parts.output) || 0);
+        return input + output;
+      }
+
+      function sumRecordTokenTotals(records) {
+        if (!Array.isArray(records)) return 0;
+        return records.reduce((sum, record) => sum + tokenPartsTotal(record?.tokens), 0);
+      }
+
+      function resolveTokenUsage(run) {
+        const usage = run?.tokenUsage && typeof run.tokenUsage === 'object' ? run.tokenUsage : null;
+        const usageTotal = Number(usage?.total) || 0;
+        if (usage && usageTotal > 0) return usage;
+        const fallbackTotal = Math.max(
+          tokenPartsTotal(run?.tokens),
+          sumRecordTokenTotals(run?.agents),
+          sumRecordTokenTotals(run?.tasks),
+        );
+        if (usage && fallbackTotal <= 0) return usage;
+        if (fallbackTotal <= 0) return usage;
+        return {
+          ...(usage ?? {}),
+          total: fallbackTotal,
+          tpm: Number(usage?.tpm) || 0,
+          tph: Number(usage?.tph) || 0,
+          buckets: Array.isArray(usage?.buckets) ? usage.buckets : [],
+        };
+      }
+
       function renderTokenUsage(run) {
         if (!tokenUsageMetaEl || !tokenTpmEl || !tokenTphEl || !tokenUsageBarsEl) return;
-        const usage = run?.tokenUsage && typeof run.tokenUsage === 'object' ? run.tokenUsage : null;
+        const usage = resolveTokenUsage(run);
         const buckets = Array.isArray(usage?.buckets) ? usage.buckets : [];
         const hasData = Boolean(usage) && (
           Number(usage.total) > 0
@@ -5262,7 +5395,19 @@ ${renderDashboardLayout()}
           setWatchdogTurnMessage('No active run', { visible: false });
           return;
         }
-        const watchdogAgent = pickAgentByKind(run?.agents ?? [], 'watchdog');
+        const explicitWatchdogAgent = pickAgentByKind(run?.agents ?? [], 'watchdog');
+        const hasWatchdogLogs = Boolean(
+          run?.watchdogLatest?.text
+          || run?.watchdogLatest?.fullText
+          || Number(run?.watchdogStdoutTotalLines) > 0
+          || (Array.isArray(run?.watchdogTurns) && run.watchdogTurns.length > 0),
+        );
+        const watchdogAgent = explicitWatchdogAgent ?? (hasWatchdogLogs
+          ? {
+            agentId: 'watchdog',
+            status: run?.watchdogLatest?.live === true ? 'running' : 'idle',
+          }
+          : null);
         if (!watchdogAgent?.agentId) {
           setWatchdogTurnMessage('No watchdog agent in active run', { visible: false });
           return;
@@ -6404,9 +6549,15 @@ ${renderDashboardLayout()}
         const heroKind = heroAgent ? deriveAgentKind(heroAgent) : 'watchdog';
         const heroTagInfo = statusBadge(heroStatus);
         const watchdogLatest = run?.watchdogLatest ?? null;
+        const hasWatchdogData = Boolean(
+          heroAgent
+          || watchdogLatest?.text
+          || watchdogLatest?.fullText
+          || run?.watchdogStdoutText,
+        );
         const heroTags = heroAgent
           ? [{ text: composeStatusTag(heroStatus, heroKind), cls: heroTagInfo.cls }]
-          : [{ text: 'idle', cls: '' }];
+          : [{ text: hasWatchdogData ? 'log' : 'idle', cls: '' }];
         if (watchdogLatest?.kind) {
           heroTags.push({ text: String(watchdogLatest.kind).replace(/-/g, ' '), cls: '' });
         }
@@ -6420,18 +6571,16 @@ ${renderDashboardLayout()}
         } else if (!heroModel) {
           heroTitleParts.push('waiting');
         }
-        const heroText = heroAgent
-          ? clipCardText(
-            pickCardText(
-              watchdogLatest?.text,
-              run?.watchdogStdoutText,
-              heroAgent?.summaryTextDelta,
-              heroAgent?.lastActivity,
-              heroAgent?.lastPromptText,
-              run?.goal,
-            ),
-          )
-          : '';
+        const heroText = clipCardText(
+          pickCardText(
+            watchdogLatest?.text,
+            run?.watchdogStdoutText,
+            heroAgent?.summaryTextDelta,
+            heroAgent?.lastActivity,
+            heroAgent?.lastPromptText,
+            hasWatchdogData ? null : run?.goal,
+          ),
+        );
         const heroMetaParts = [];
         if (heroAgent?.taskId) heroMetaParts.push('task: ' + heroAgent.taskId);
         if (watchdogLatest?.source) heroMetaParts.push('source: ' + watchdogLatest.source);
@@ -6443,9 +6592,9 @@ ${renderDashboardLayout()}
           {
             title: heroTitleParts.join(' - '),
             tags: heroTags,
-            meta: heroAgent ? heroMetaParts.join(' · ') : 'No watchdog yet.',
+            meta: heroMetaParts.join(' · ') || (hasWatchdogData ? 'watchdog logs' : 'No watchdog yet.'),
             text: heroText,
-            hasData: Boolean(heroAgent),
+            hasData: hasWatchdogData,
           },
         );
 
@@ -10559,6 +10708,8 @@ export class CdxStatsServer {
     run.tokens = { input: 0, cachedInput: 0, output: 0 };
     run.tokenUsageBuckets = new Map();
     run.tokenUsageEvents = new RingBuffer(2000);
+    run.tokenUsageThreadTotals = new Map();
+    run.tokenUsageNotificationKeys = new Set();
     run.tasks = new Map();
     run.asks = new Map();
     run.workers = new Map();
@@ -11439,16 +11590,10 @@ export class CdxStatsServer {
       const taskId = payload.taskId ? String(payload.taskId) : null;
       const usage = isObject(payload.usage) ? payload.usage : null;
 
-      const inputTokens = readTokenCount(usage, 'inputTokens', 'input_tokens', 'prompt_tokens', 'promptTokens');
-      const cachedInputTokens = readTokenCount(
-        usage,
-        'cachedInputTokens',
-        'cached_input_tokens',
-        'cached_tokens',
-        'input_tokens_details.cached_tokens',
-        'prompt_tokens_details.cached_tokens',
-      );
-      const outputTokens = readTokenCount(usage, 'outputTokens', 'output_tokens', 'completion_tokens', 'completionTokens');
+      const usageParts = readTextTokenUsageParts(usage);
+      const inputTokens = usageParts?.input ?? null;
+      const cachedInputTokens = usageParts?.cachedInput ?? null;
+      const outputTokens = usageParts?.output ?? null;
 
       const hasAnyTokenCounts =
         inputTokens !== null || cachedInputTokens !== null || outputTokens !== null;
@@ -11481,10 +11626,11 @@ export class CdxStatsServer {
       const deltaCached = cachedInputTokens ?? 0;
       const deltaOutput = outputTokens ?? 0;
 
-      if (!run.tokens) run.tokens = { input: 0, cachedInput: 0, output: 0 };
-      run.tokens.input += deltaInput;
-      run.tokens.cachedInput += deltaCached;
-      run.tokens.output += deltaOutput;
+      addTokenUsagePartsToRecord(run, {
+        input: deltaInput,
+        cachedInput: deltaCached,
+        output: deltaOutput,
+      });
       recordTokenUsage(run, {
         at: eventEntry.ts,
         input: deltaInput,
@@ -11512,10 +11658,11 @@ export class CdxStatsServer {
         costUsd: 0,
         tokens: { input: 0, cachedInput: 0, output: 0 },
       };
-      if (!agent.tokens) agent.tokens = { input: 0, cachedInput: 0, output: 0 };
-      agent.tokens.input += deltaInput;
-      agent.tokens.cachedInput += deltaCached;
-      agent.tokens.output += deltaOutput;
+      addTokenUsagePartsToRecord(agent, {
+        input: deltaInput,
+        cachedInput: deltaCached,
+        output: deltaOutput,
+      });
       if (deltaUsd !== null) {
         agent.costUsd = (Number.isFinite(agent.costUsd) ? agent.costUsd : 0) + deltaUsd;
       }
@@ -11543,10 +11690,11 @@ export class CdxStatsServer {
         costUsd: 0,
         tokens: { input: 0, cachedInput: 0, output: 0 },
       };
-        if (!task.tokens) task.tokens = { input: 0, cachedInput: 0, output: 0 };
-        task.tokens.input += deltaInput;
-        task.tokens.cachedInput += deltaCached;
-        task.tokens.output += deltaOutput;
+        addTokenUsagePartsToRecord(task, {
+          input: deltaInput,
+          cachedInput: deltaCached,
+          output: deltaOutput,
+        });
         if (deltaUsd !== null) {
           task.costUsd = (Number.isFinite(task.costUsd) ? task.costUsd : 0) + deltaUsd;
         }
@@ -11569,6 +11717,7 @@ export class CdxStatsServer {
       const line = summary?.line ?? null;
       const activity = summary?.activity ?? null;
       const activityKind = summary?.activityKind ?? null;
+      const notificationTokenParts = readAppserverNotificationTokenUsageParts(method, params, run);
       const now = Date.now();
       if (summary?.commandSummary) {
         run.lastCommand = summary.commandSummary;
@@ -11620,6 +11769,16 @@ export class CdxStatsServer {
         agent.summaryTextDelta = mergeSummaryDeltaText(agent.summaryTextDelta, deltaText);
         agent.summaryTextDeltaAt = now;
       }
+      if (notificationTokenParts && tokenUsageTotal(notificationTokenParts) > 0) {
+        addTokenUsagePartsToRecord(run, notificationTokenParts);
+        addTokenUsagePartsToRecord(agent, notificationTokenParts);
+        recordTokenUsage(run, {
+          at: eventEntry.ts,
+          input: notificationTokenParts.input,
+          cachedInput: notificationTokenParts.cachedInput,
+          output: notificationTokenParts.output,
+        });
+      }
       run.agents.set(agentId, agent);
 
       if (payload.taskId) {
@@ -11634,6 +11793,9 @@ export class CdxStatsServer {
           if (deltaText) {
             task.summaryTextDelta = mergeSummaryDeltaText(task.summaryTextDelta, deltaText);
             task.summaryTextDeltaAt = now;
+          }
+          if (notificationTokenParts && tokenUsageTotal(notificationTokenParts) > 0) {
+            addTokenUsagePartsToRecord(task, notificationTokenParts);
           }
           run.tasks.set(taskId, task);
         }
@@ -13543,6 +13705,8 @@ export class CdxStatsServer {
       tokens: { input: 0, cachedInput: 0, output: 0 },
       tokenUsageBuckets: new Map(),
       tokenUsageEvents: new RingBuffer(2000),
+      tokenUsageThreadTotals: new Map(),
+      tokenUsageNotificationKeys: new Set(),
       tasks: new Map(),
       asks: new Map(),
       agents: new Map([
