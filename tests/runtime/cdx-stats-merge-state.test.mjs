@@ -53,6 +53,60 @@ test('stats keeps a completed run in merging state while conflict resolver is ac
   assert.match(run.currentTaskSummary, /alpha/);
 });
 
+test('stats keeps a run active and focused while final checkpoint is running', () => {
+  const stats = new CdxStatsServer({ enabled: false });
+  const runId = 'checkpoint-state-test';
+
+  stats.recordEvent({
+    type: 'run.started',
+    runId,
+    goal: 'verify final checkpoint dashboard state',
+    pid: process.pid,
+  });
+  stats.recordEvent({
+    type: 'task.completed',
+    runId,
+    taskId: 'task-final-validation',
+    description: 'Run integration review and overall smoke-validation plan',
+  });
+  stats.recordEvent({
+    type: 'agent.started',
+    runId,
+    agentId: 'checkpoint:final',
+    phase: 'checkpoint',
+  });
+  stats.recordEvent({
+    type: 'appserver.notification',
+    runId,
+    agentId: 'checkpoint:final',
+    phase: 'checkpoint',
+    method: 'item/agentMessage/delta',
+    params: {
+      item: {
+        type: 'agentMessage',
+        text: 'Adjusting verification harness and contract docs before closeout.',
+      },
+    },
+  });
+  stats.recordEvent({
+    type: 'run.completed',
+    runId,
+    status: 'completed',
+  });
+
+  const run = stats.getState(runId).activeRun;
+
+  assert.equal(run.status, 'completed');
+  assert.equal(run.stage, 'validating');
+  assert.equal(run.inFlight, true);
+  assert.equal(run.canKill, true);
+  assert.equal(run.counts.agentsRunning, 1);
+  assert.equal(run.counts.checkpointAgentsRunning, 1);
+  assert.match(run.currentTaskSummary, /validating/i);
+  assert.match(run.currentTaskSummary, /checkpoint:final/);
+  assert.doesNotMatch(run.currentTaskSummary, /^completed/i);
+});
+
 test('stats records appserver token usage notifications into run token usage', () => {
   const stats = new CdxStatsServer({ enabled: false });
   const runId = 'token-notification-test';

@@ -6288,7 +6288,11 @@ ${renderDashboardLayout()}
 
         const agentsTotal = run.counts?.agentsTotal ?? 0;
         const agentsRunning = run.counts?.agentsRunning ?? 0;
-        pillAgents.textContent = 'agents: ' + agentsRunning;
+        const checkpointAgentsRunning = Number(run.counts?.checkpointAgentsRunning) || 0;
+        const reviewAgentsRunning = Number(run.counts?.reviewAgentsRunning) || 0;
+        const activeValidationAgents = checkpointAgentsRunning + reviewAgentsRunning;
+        pillAgents.textContent = 'agents: ' + agentsRunning
+          + (activeValidationAgents > 0 ? ' (validation ' + activeValidationAgents + ')' : '');
 
         const tasksTotal = run.counts?.tasksTotal ?? 0;
         const tasksCompleted = run.counts?.tasksCompleted ?? 0;
@@ -6328,7 +6332,12 @@ ${renderDashboardLayout()}
           : null;
         pillTime.textContent = 'time: ' + formatDuration(elapsedMs) + ' eta: ' + formatDuration(remainingMs);
 
-        if (statusRunEl) statusRunEl.textContent = String(run.counts?.tasksRunning ?? 0);
+        if (statusRunEl) {
+          statusRunEl.textContent = String(Math.max(
+            Number(run.counts?.tasksRunning) || 0,
+            activeValidationAgents,
+          ));
+        }
         if (statusWaitEl) statusWaitEl.textContent = String(run.counts?.tasksPending ?? 0);
         if (statusBlockEl) statusBlockEl.textContent = String(run.counts?.tasksBlocked ?? 0);
         if (statusMergeEl) statusMergeEl.textContent = String(schedCounts.merging ?? 0);
@@ -6356,7 +6365,7 @@ ${renderDashboardLayout()}
           ['head', run.headRef ?? '-'],
           ['runRoot', run.runRoot ?? '-'],
           ['keepWorktrees', String(run.keepWorktrees ?? false)],
-          ['agents', agentsRunning + ' running (total ' + agentsTotal + ')'],
+          ['agents', agentsRunning + ' running (total ' + agentsTotal + ') · checkpoint: ' + checkpointAgentsRunning + ' · review: ' + reviewAgentsRunning],
           ['tasks', tasksCompleted + '/' + tasksTotal + ' completed · superseded: ' + tasksSuperseded + ' · running: ' + (run.counts?.tasksRunning ?? 0) + ' · pending: ' + (run.counts?.tasksPending ?? 0) + ' · failed: ' + tasksFailed + ' · blocked: ' + tasksBlocked],
           ['sched', 'running=' + schedCounts.running + ' · pending=' + schedCounts.pending + ' · blocked=' + schedCounts.blocked + ' · merging=' + schedCounts.merging + bottleneck + ownership],
           ['backpressure', backpressureLabel],
@@ -10355,6 +10364,38 @@ function summarizeRunTaskSummary(run) {
     return desc ?? null;
   };
 
+  const formatAgent = agent => {
+    const agentId = String(agent?.agentId ?? '').trim();
+    const taskId = String(agent?.taskId ?? '').trim();
+    const activity = clipSummary(
+      agent?.summaryTextDelta
+      ?? agent?.lastActivity
+      ?? agent?.lastPromptText,
+      80,
+    );
+    const identity = agentId || (taskId ? `task ${taskId}` : '');
+    if (identity && activity) return `${identity}: ${activity}`;
+    return identity || activity || null;
+  };
+
+  const summarizeActivePhase = (phase, label) => {
+    const phaseAgents = agents.filter(agent => (
+      isActiveRunAgent(agent)
+      && String(agent?.phase ?? '').trim().toLowerCase() === phase
+    ));
+    if (phaseAgents.length === 0) return null;
+    const primary = pickLatest(phaseAgents);
+    const agentLabel = formatAgent(primary);
+    const prefix = phaseAgents.length > 1 ? `${phaseAgents.length} ${label} agents` : label;
+    return clipSummary(agentLabel ? `${prefix} · ${agentLabel}` : prefix, 120);
+  };
+
+  const reviewSummary = summarizeActivePhase('review', 'reviewing');
+  if (reviewSummary) return reviewSummary;
+
+  const checkpointSummary = summarizeActivePhase('checkpoint', 'validating');
+  if (checkpointSummary) return checkpointSummary;
+
   const mergeAgents = agents.filter(agent => isMergeLikeAgent(agent) && isActiveRunAgent(agent));
   if (mergeAgents.length > 0) {
     const primary = pickLatest(mergeAgents);
@@ -10390,7 +10431,10 @@ function isCountedAgentForStats(agent) {
   const taskId = agent?.taskId;
   if (taskId !== null && taskId !== undefined && String(taskId).trim()) return true;
   const phase = String(agent?.phase ?? '').trim().toLowerCase();
-  return phase === 'task' || isMergeLikeAgent(agent);
+  return phase === 'task'
+    || phase === 'checkpoint'
+    || phase === 'review'
+    || isMergeLikeAgent(agent);
 }
 
 const RUN_IN_FLIGHT_STAGES = new Set([
@@ -12193,6 +12237,8 @@ export class CdxStatsServer {
         const counts = {
           agentsRunning: countedAgents.filter(agent => agent.status === 'running' || agent.status === 'disposing').length,
           mergeAgentsRunning: agents.filter(agent => isMergeLikeAgent(agent) && isActiveRunAgent(agent)).length,
+          reviewAgentsRunning: countActiveRunAgentsByPhase(agents, 'review'),
+          checkpointAgentsRunning: countActiveRunAgentsByPhase(agents, 'checkpoint'),
           tasksPending: knownPending + missingTasks,
           tasksRunning: tasks.filter(task => task.status === 'running').length,
           tasksSuperseded: tasks.filter(task => task.status === 'superseded').length,
@@ -12396,6 +12442,8 @@ export class CdxStatsServer {
       agentsRunning: countedAgents.filter(agent => agent.status === 'running' || agent.status === 'disposing').length,
       agentsDisposed: countedAgents.filter(agent => agent.status === 'disposed').length,
       mergeAgentsRunning: agents.filter(agent => isMergeLikeAgent(agent) && isActiveRunAgent(agent)).length,
+      reviewAgentsRunning: countActiveRunAgentsByPhase(agents, 'review'),
+      checkpointAgentsRunning: countActiveRunAgentsByPhase(agents, 'checkpoint'),
       tasksTotal,
       tasksPending: knownPending + missingTasks,
       tasksRunning: tasks.filter(t => t.status === 'running').length,
