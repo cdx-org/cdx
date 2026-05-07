@@ -10813,7 +10813,7 @@ export class CdxStatsServer {
       summaryTextDeltaAt: now - 20_000,
       lastPromptText: 'Create a synthetic dashboard run with running workers and visible git tree.',
       lastPromptAt: now - 30_000,
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       costUsd: 0,
       tokens: { input: 0, cachedInput: 0, output: 0 },
     };
@@ -10833,7 +10833,7 @@ export class CdxStatsServer {
       summaryTextDeltaAt: now - 2_000,
       lastPromptText: 'Track stalled tasks and merge risk; intervene when needed.',
       lastPromptAt: now - 6_000,
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       costUsd: 0,
       tokens: { input: 0, cachedInput: 0, output: 0 },
     };
@@ -10913,7 +10913,7 @@ export class CdxStatsServer {
         summaryTextDeltaAt: startedAt + 1_000,
         lastPromptText: `Execute ${taskId} debug workload`,
         lastPromptAt: startedAt - 1_000,
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         costUsd: 0,
         tokens: { input: 0, cachedInput: 0, output: 0 },
       });

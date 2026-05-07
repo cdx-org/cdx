@@ -49,7 +49,7 @@ const APP_SERVER_ENTRY = process.env.CDX_APPSERVER_ENTRY
   ? path.resolve(process.env.CDX_APPSERVER_ENTRY)
   : DEFAULT_APP_SERVER_ENTRY;
 const APP_SERVER_COMMAND = process.env.CDX_APPSERVER_COMMAND ?? process.execPath;
-const DEFAULT_CODEX_MODEL = process.env.CDX_DEFAULT_MODEL ?? process.env.CDX_MODEL ?? 'gpt-5.4';
+const DEFAULT_CODEX_MODEL = process.env.CDX_DEFAULT_MODEL ?? process.env.CDX_MODEL ?? 'gpt-5.5';
 
 function logDebug(...args) {
   if (process.env.CDX_LOG_LEVEL === 'debug') {

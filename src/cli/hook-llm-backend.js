@@ -357,7 +357,7 @@ const MAX_OUTPUT_TOKENS = Math.max(
 const MODEL =
   trimMaybe(process.env.CDX_HOOKS_MODEL)
   || trimMaybe(process.env.OPENAI_DEFAULT_MODEL)
-  || 'gpt-5.4';
+  || 'gpt-5.5';
 const REASONING_EFFORT = trimMaybe(process.env.CDX_HOOKS_EFFORT) || 'low';
 const TIMEOUT_MS = Number.parseInt(process.env.CDX_HOOKS_LLM_TIMEOUT_MS ?? '1200', 10) || 1200;
 const PREFLIGHT_POLICY = parseJsonEnv('CDX_HOOKS_PREFLIGHT_POLICY_JSON');

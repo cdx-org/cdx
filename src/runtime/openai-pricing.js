@@ -19,6 +19,7 @@ function normalizeModel(value) {
 
 const TEXT_TOKEN_RATES_PER_1M = {
   batch: {
+    'gpt-5.5': { input: 0.938, cachedInput: 0.094, output: 7.5 },
     'gpt-5.4': { input: 0.938, cachedInput: 0.094, output: 7.5 },
     'gpt-5': { input: 0.625, cachedInput: 0.0625, output: 5.0 },
     'gpt-5-mini': { input: 0.125, cachedInput: 0.0125, output: 1.0 },
@@ -42,6 +43,7 @@ const TEXT_TOKEN_RATES_PER_1M = {
     'computer-use-preview': { input: 1.5, cachedInput: null, output: 6.0 },
   },
   flex: {
+    'gpt-5.5': { input: 0.938, cachedInput: 0.094, output: 7.5 },
     'gpt-5.4': { input: 0.938, cachedInput: 0.094, output: 7.5 },
     'gpt-5': { input: 0.625, cachedInput: 0.0625, output: 5.0 },
     'gpt-5-mini': { input: 0.125, cachedInput: 0.0125, output: 1.0 },
@@ -50,6 +52,7 @@ const TEXT_TOKEN_RATES_PER_1M = {
     'o4-mini': { input: 0.55, cachedInput: 0.138, output: 2.2 },
   },
   standard: {
+    'gpt-5.5': { input: 1.875, cachedInput: 0.188, output: 15.0 },
     'gpt-5.4': { input: 1.875, cachedInput: 0.188, output: 15.0 },
     'gpt-5': { input: 1.25, cachedInput: 0.125, output: 10.0 },
     'gpt-5-mini': { input: 0.25, cachedInput: 0.025, output: 2.0 },
@@ -93,6 +96,7 @@ const TEXT_TOKEN_RATES_PER_1M = {
     'gpt-image-1-mini': { input: 2.0, cachedInput: 0.2, output: null },
   },
   priority: {
+    'gpt-5.5': { input: 3.75, cachedInput: 0.375, output: 30.0 },
     'gpt-5.4': { input: 3.75, cachedInput: 0.375, output: 30.0 },
     'gpt-5': { input: 2.5, cachedInput: 0.25, output: 20.0 },
     'gpt-5-mini': { input: 0.45, cachedInput: 0.045, output: 3.6 },

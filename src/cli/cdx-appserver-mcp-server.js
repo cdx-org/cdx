@@ -209,7 +209,7 @@ const DEFAULT_TASK_MODEL =
   process.env.CDX_DEFAULT_TASK_MODEL
   ?? process.env.CDX_TASK_MODEL_DEFAULT
   ?? process.env.CDX_TASK_MODEL
-  ?? 'gpt-5.4';
+  ?? 'gpt-5.5';
 
 const DEFAULT_MODEL_SPECS = [
   { model: DEFAULT_TASK_MODEL, effort: 'medium' },
@@ -218,12 +218,12 @@ const DEFAULT_MODEL_SPECS = [
 const DEFAULT_MODEL =
   process.env.CDX_DEFAULT_MODEL ?? process.env.CDX_MODEL ?? DEFAULT_MODEL_SPECS[0].model;
 const DEFAULT_PLANNER_MODEL =
-  process.env.CDX_PLANNER_MODEL_DEFAULT ?? 'gpt-5.4';
+  process.env.CDX_PLANNER_MODEL_DEFAULT ?? 'gpt-5.5';
 const DEFAULT_WATCHDOG_MODEL =
   process.env.CDX_DEFAULT_WATCHDOG_MODEL
   ?? process.env.CDX_WATCHDOG_MODEL_DEFAULT
   ?? process.env.CDX_WATCHDOG_MODEL
-  ?? 'gpt-5.4';
+  ?? 'gpt-5.5';
 const WATCHDOG_STEER_COOLDOWN_MS = Math.max(
   1_000,
   Number.parseInt(process.env.CDX_WATCHDOG_STEER_COOLDOWN_MS ?? '60000', 10) || 60_000,
@@ -1511,7 +1511,7 @@ const HOOKS_MAX_STRING_CHARS = (() => {
   const parsed = Number.parseInt(process.env.CDX_HOOKS_MAX_STRING_CHARS ?? '8000', 10);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 8000;
 })();
-const HOOKS_MODEL = 'gpt-5.4';
+const HOOKS_MODEL = 'gpt-5.5';
 const HOOKS_EFFORT = 'low';
 const HOOKS_ITEM_TYPES = parseHookItemTypes(process.env.CDX_HOOKS_ITEM_TYPES);
 const HOOKS_HEADERS = parseJsonObject(
