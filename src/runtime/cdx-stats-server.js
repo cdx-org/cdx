@@ -847,7 +847,17 @@ function parseGitLogCommitRows(output) {
   return commits;
 }
 
-function filterGraphCommitsForSimple(commits, focusIds) {
+function isCdxTaskBootstrapCommit(commit) {
+  const subject = String(commit?.subject ?? '').trim().toLowerCase();
+  if (!subject.startsWith('cdx: init task ')) return false;
+  const decorations = String(commit?.decorations ?? '').trim();
+  return decorations.includes('refs/heads/cdx/task/')
+    || decorations.includes('cdx/task/');
+}
+
+export function filterGraphCommitsForSimple(commits, focusIds, {
+  hideTaskBootstrapCommits = true,
+} = {}) {
   const list = Array.isArray(commits) ? commits : [];
   const focus = new Set(
     (Array.isArray(focusIds) ? focusIds : [])
@@ -859,7 +869,9 @@ function filterGraphCommitsForSimple(commits, focusIds) {
     if (focus.has(commit.id)) return true;
     if (Array.isArray(commit.parents) && commit.parents.length > 1) return true;
     const decorations = String(commit.decorations ?? '').trim();
-    return decorations.length > 0;
+    if (!decorations) return false;
+    if (hideTaskBootstrapCommits && isCdxTaskBootstrapCommit(commit)) return false;
+    return true;
   });
 }
 
@@ -8945,10 +8957,15 @@ ${renderDashboardLayout()}
 				          const untrackedLabel = settings.includeUntracked ? 'on' : 'off';
 				          const upstreamLabel = data.upstreamRef ? ('upstream: ' + data.upstreamRef + '\\n') : '';
 				          const pageSizeLabel = settings.pageSize > 0 ? String(settings.pageSize) : 'all';
+                  const hiddenBootstrapTaskCommits = Math.max(0, Number(data.hiddenBootstrapTaskCommits) || 0);
+                  const hiddenBootstrapLabel = hiddenBootstrapTaskCommits > 0
+                    ? (' · bootstrap hidden: ' + String(hiddenBootstrapTaskCommits))
+                    : '';
 				          if (settings.simple) {
 				            graphMeta.textContent =
 				              'branch/merge view · loaded: ' + String(graphCommits.length) +
 				              ' · refs: ' + String(focusRefs.length) +
+                      hiddenBootstrapLabel +
 				              ' · page size: ' + pageSizeLabel + '\\n' +
 				              'head: ' + (data.headRef ?? '-') +
 				              ' · integration: ' + (data.integrationBranch ?? '-') +
@@ -13502,7 +13519,15 @@ export class CdxStatsServer {
 	        const hasMore = !unlimited && commitsRaw.length > limit;
 	        const pageRaw = unlimited ? commitsRaw : (hasMore ? commitsRaw.slice(0, limit) : commitsRaw);
 	        const focusCommitIds = [headCommit, integrationCommit, upstreamCommit].filter(Boolean);
-	        const commits = simple ? filterGraphCommitsForSimple(pageRaw, focusCommitIds) : pageRaw;
+	        const simpleCandidates = simple
+	          ? filterGraphCommitsForSimple(pageRaw, focusCommitIds, { hideTaskBootstrapCommits: false })
+	          : pageRaw;
+	        const commits = simple
+	          ? filterGraphCommitsForSimple(pageRaw, focusCommitIds)
+	          : pageRaw;
+	        const hiddenBootstrapTaskCommits = simple
+	          ? Math.max(0, simpleCandidates.length - commits.length)
+	          : 0;
 	        const nextSkip = unlimited ? commitsRaw.length : skip + pageRaw.length;
 
 	        const worktrees = [];
@@ -13615,6 +13640,7 @@ export class CdxStatsServer {
 	          decorateAll,
 	          limit,
 	          unlimited,
+	          hiddenBootstrapTaskCommits,
 	          worktreeChanges,
 	          dirtyWorktrees,
 	          worktrees,
