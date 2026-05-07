@@ -7,6 +7,7 @@ import { open, readdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 
+import { hiddenSpawnOptions } from './child-process-options.js';
 import { git } from './git-worktree.js';
 import { computeTextTokenCostUsd, normalizePricingTier } from './openai-pricing.js';
 import { renderDashboardLayout } from './cdx-stats-dashboard-cards.js';
@@ -21,6 +22,23 @@ function parseNonNegativeInt(value) {
   if (!Number.isFinite(num) || num < 0) return null;
   return num;
 }
+
+const DEFAULT_TASK_OUTPUT_TAIL_LINES = Math.max(
+  1,
+  parseNonNegativeInt(process.env.CDX_TASK_OUTPUT_TAIL_LINES) ?? 15,
+);
+const DEFAULT_TASK_OUTPUT_TAIL_CHARS = Math.max(
+  80,
+  parseNonNegativeInt(process.env.CDX_TASK_OUTPUT_TAIL_CHARS) ?? 240,
+);
+const PRE_TASK_OUTPUT_TAIL_LINES = Math.max(
+  DEFAULT_TASK_OUTPUT_TAIL_LINES,
+  parseNonNegativeInt(process.env.CDX_PRE_TASK_OUTPUT_TAIL_LINES) ?? 80,
+);
+const PRE_TASK_OUTPUT_TAIL_CHARS = Math.max(
+  DEFAULT_TASK_OUTPUT_TAIL_CHARS,
+  parseNonNegativeInt(process.env.CDX_PRE_TASK_OUTPUT_TAIL_CHARS) ?? 360,
+);
 
 function pickFirstString(...values) {
   for (const candidate of values) {
@@ -683,7 +701,13 @@ function formatWatchdogTurnLogText(entries) {
   return lines.join('\n');
 }
 
-function buildTaskOutputTail(entries, { maxLines = 15, maxCharsPerLine = 240 } = {}) {
+export function buildTaskOutputTail(
+  entries,
+  {
+    maxLines = DEFAULT_TASK_OUTPUT_TAIL_LINES,
+    maxCharsPerLine = DEFAULT_TASK_OUTPUT_TAIL_CHARS,
+  } = {},
+) {
   const raw = Array.isArray(entries) ? entries : [];
   if (raw.length === 0) {
     return {
@@ -1178,13 +1202,10 @@ function runDetached(command, args, { timeoutMs = 1500 } = {}) {
 
     let timer = null;
     try {
-      const baseCommand = path.basename(String(command ?? '')).toLowerCase();
-      const windowsHide = baseCommand === 'cmd' || baseCommand === 'cmd.exe';
-      const child = spawn(command, args, {
+      const child = spawn(command, args, hiddenSpawnOptions({
         stdio: 'ignore',
         detached: true,
-        windowsHide,
-      });
+      }));
       child.unref();
 
       child.once('error', () => finish(false));
@@ -4071,6 +4092,17 @@ ${renderDashboardLayout()}
             : run?.plannerStdoutLineCount,
           10,
         ) || 0;
+        const totalLineCount = Number.parseInt(
+          kind === 'scout'
+            ? run?.scoutStdoutTotalLines
+            : run?.plannerStdoutTotalLines,
+          10,
+        ) || 0;
+        const truncated = Boolean(
+          kind === 'scout'
+            ? run?.scoutStdoutTruncated
+            : run?.plannerStdoutTruncated,
+        );
         const plannedTaskCount = Number.parseInt(run?.plannedTaskCount, 10) || 0;
         const parallelism = Number.parseInt(run?.counts?.parallelism, 10) || 0;
         const plannerPlanText = String(run?.plannerPlanText ?? '').trim();
@@ -4091,7 +4123,12 @@ ${renderDashboardLayout()}
 
         const meta = ['No target tasks yet'];
         if (agent?.agentId) meta.push('agent: ' + String(agent.agentId));
-        if (lineCount > 0) meta.push(kind + ' output lines: ' + String(lineCount));
+        if (lineCount > 0) {
+          const totalLabel = totalLineCount > lineCount
+            ? String(lineCount) + '/' + String(totalLineCount)
+            : String(lineCount);
+          meta.push(kind + ' output lines: ' + totalLabel + (truncated ? ' visible' : ''));
+        }
         if (kind === 'planner' && plannedTaskCount > 0) {
           meta.push('planned tasks: ' + String(plannedTaskCount));
         }
@@ -11652,10 +11689,19 @@ export class CdxStatsServer {
 
     const tokens = run.tokens ?? null;
     const costUsd = Number.isFinite(run.costUsd) ? run.costUsd : null;
-    const scoutOutputTail = buildTaskOutputTail(run.logs.get('scout')?.items ?? []);
-    const plannerOutputTail = buildTaskOutputTail(run.logs.get('planner')?.items ?? []);
+    const scoutOutputTail = buildTaskOutputTail(run.logs.get('scout')?.items ?? [], {
+      maxLines: PRE_TASK_OUTPUT_TAIL_LINES,
+      maxCharsPerLine: PRE_TASK_OUTPUT_TAIL_CHARS,
+    });
+    const plannerOutputTail = buildTaskOutputTail(run.logs.get('planner')?.items ?? [], {
+      maxLines: PRE_TASK_OUTPUT_TAIL_LINES,
+      maxCharsPerLine: PRE_TASK_OUTPUT_TAIL_CHARS,
+    });
     const watchdogLogs = run.logs.get('watchdog')?.items ?? [];
-    const watchdogOutputTail = buildTaskOutputTail(watchdogLogs);
+    const watchdogOutputTail = buildTaskOutputTail(watchdogLogs, {
+      maxLines: PRE_TASK_OUTPUT_TAIL_LINES,
+      maxCharsPerLine: PRE_TASK_OUTPUT_TAIL_CHARS,
+    });
     const watchdogAgent = agents.find(agent => String(agent?.agentId ?? '') === 'watchdog') ?? null;
     const watchdogLive = agents.some(agent =>
       String(agent?.agentId ?? '') === 'watchdog'

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -75,5 +76,6 @@ test('resolveProjectRoot walks up from both helper and script entrypoints', () =
   const scriptRoot = resolveProjectRoot(new URL('../../scripts/smoke-startup-paths.js', import.meta.url));
 
   assert.equal(helperRoot, scriptRoot);
-  assert.ok(helperRoot.replace(/\\/g, '/').endsWith('/mcp-cdx'));
+  const packageJson = JSON.parse(readFileSync(path.join(helperRoot, 'package.json'), 'utf8'));
+  assert.equal(packageJson.name, 'mcp-cdx');
 });

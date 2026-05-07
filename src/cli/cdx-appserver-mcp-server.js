@@ -60,6 +60,7 @@ import {
   buildChecklistTasks,
   normalizeChecklistConfig,
 } from '../runtime/checklist-mode.js';
+import { hiddenSpawnOptions } from '../runtime/child-process-options.js';
 import { loadPromptTemplate, renderPromptTemplate } from '../runtime/prompt-templates.js';
 import {
   didInterventionMakeProgress,
@@ -1530,7 +1531,11 @@ const TASK_IDLE_TIMEOUT_RAW_MS = Math.max(
 const TASK_IDLE_TIMEOUT_MS = TASK_IDLE_TIMEOUT_RAW_MS === 0
   ? 0
   : Math.max(TASK_IDLE_WARN_MS, TASK_IDLE_TIMEOUT_RAW_MS);
-const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000;
+const WATCHDOG_INTERVAL_MS = (() => {
+  const parsed = Number.parseInt(process.env.CDX_WATCHDOG_INTERVAL_MS ?? `${5 * 60 * 1000}`, 10);
+  if (!Number.isFinite(parsed)) return 5 * 60 * 1000;
+  return Math.max(0, parsed);
+})();
 const NO_PROGRESS_TIMEOUT_MS = (() => {
   const parsed = Number.parseInt(process.env.CDX_NO_PROGRESS_TIMEOUT_MS ?? `${5 * 60 * 1000}`, 10);
   if (!Number.isFinite(parsed)) return 5 * 60 * 1000;
@@ -12310,7 +12315,29 @@ Blocked tasks (need recovery coverage):
         .filter(state => state.status === 'pending');
       const runningMeta = buildRunningMeta(now);
       const diagnostics = diagnosePendingStates(pendingStates, runningMeta);
+      const runningAttentionTaskIds = [];
+      const runningNoProgress =
+        running.size > 0
+        && NO_PROGRESS_TIMEOUT_MS > 0
+        && now - lastProgressAt >= NO_PROGRESS_TIMEOUT_MS;
+      for (const taskId of runningTasks.values()) {
+        const meta = runningMeta.get(taskId);
+        if (!meta) continue;
+        const orphaned = meta.hasClient === false;
+        const idleOverRespawn =
+          respawnIdleMs > 0
+          && Number.isFinite(meta.idleMs)
+          && meta.idleMs >= respawnIdleMs;
+        const idleOverNoProgress =
+          runningNoProgress
+          && Number.isFinite(meta.idleMs)
+          && meta.idleMs >= NO_PROGRESS_TIMEOUT_MS;
+        if (orphaned || idleOverRespawn || idleOverNoProgress) {
+          runningAttentionTaskIds.push(taskId);
+        }
+      }
       const actionablePending = pendingStates.length > 0;
+      const actionableRunning = runningAttentionTaskIds.length > 0;
       const noReadyWork = ready.length === 0;
       const noWorkers = running.size === 0;
       const waitingOnlyOnHealthyRunning =
@@ -12333,15 +12360,19 @@ Blocked tasks (need recovery coverage):
           || diagnostics.blockedByBlocked.length > 0
         )
         && !waitingOnlyOnHealthyRunning;
+      const meaningfulRunningStall = actionableRunning && noReadyWork;
 
       return {
         pendingStates,
         runningMeta,
         diagnostics,
         actionablePending,
+        actionableRunning,
+        runningAttentionTaskIds,
+        runningNoProgress,
         noReadyWork,
         noWorkers,
-        meaningfulShortfall,
+        meaningfulShortfall: meaningfulShortfall || meaningfulRunningStall,
         waitingOnlyOnHealthyRunning,
       };
     };
@@ -12373,13 +12404,13 @@ Blocked tasks (need recovery coverage):
       if (watchdogRunning) return watchdogPromise;
       const intervalDue = lastWatchdogAt === 0 || now - lastWatchdogAt >= WATCHDOG_INTERVAL_MS;
       const signals = buildWatchdogSignals(now);
-      if (!signals.actionablePending) return null;
+      if (!signals.actionablePending && !signals.actionableRunning) return null;
 
       const noProgressDue =
         NO_PROGRESS_TIMEOUT_MS > 0
         && now - lastProgressAt >= NO_PROGRESS_TIMEOUT_MS;
       if (!force && !intervalDue && !noProgressDue) return null;
-      if (!signals.meaningfulShortfall && !noProgressDue) return null;
+      if (!signals.meaningfulShortfall && !noProgressDue && !signals.actionableRunning) return null;
 
       watchdogRunning = true;
       lastWatchdogAt = now;
@@ -12394,6 +12425,9 @@ Blocked tasks (need recovery coverage):
       if (intervalDue) reasonParts.push('interval');
       if (noProgressDue) reasonParts.push('no-progress');
       if (signals.noWorkers && signals.noReadyWork) reasonParts.push('no-workers');
+      if (signals.actionableRunning) {
+        reasonParts.push(`running-attention (${signals.runningAttentionTaskIds.length})`);
+      }
       const reasonLabel = reasonParts.join(', ') || 'unspecified';
 
       const snapshotText = buildWatchdogSnapshotText();
@@ -13566,7 +13600,9 @@ Blocked tasks (need recovery coverage):
 
       const pendingStates = [...taskStates.values()]
         .filter(state => state.status === 'pending');
-      if (pendingStates.length === 0 || ready.length > 0) return;
+      const signals = buildWatchdogSignals(now);
+      if (!signals.actionablePending && !signals.actionableRunning) return;
+      if (ready.length > 0 && !signals.actionableRunning) return;
 
       lastNoProgressInterventionAt = now;
       emitEvent?.({
@@ -13575,6 +13611,7 @@ Blocked tasks (need recovery coverage):
         running: running.size,
         pending: pendingStates.length,
         ready: ready.length,
+        runningAttention: signals.runningAttentionTaskIds,
       });
 
       const outcome = summarizeWatchdogOutcome(
@@ -13619,11 +13656,11 @@ Blocked tasks (need recovery coverage):
 
       const pendingStates = [...taskStates.values()]
         .filter(state => state.status === 'pending');
+      const signals = buildWatchdogSignals(now);
+      if (!signals.actionablePending && !signals.actionableRunning) return;
 
       lastPeriodicInterventionAt = now;
       lastPeriodicInterventionTurn = turnCounter;
-
-      if (pendingStates.length === 0) return;
 
       lastWatchdogInterventionAt = now;
       const reasonParts = [];
@@ -17278,11 +17315,11 @@ class CdxAppServerMcpServer {
         CDX_STATS_UI_HOST: process.env.CDX_STATS_UI_HOST ?? '127.0.0.1',
         CDX_STATS_UI_PORT: process.env.CDX_STATS_UI_PORT ?? '0',
       };
-      const child = spawn(STATS_UI_SERVER_COMMAND, [STATS_UI_SERVER_ENTRY], {
+      const child = spawn(STATS_UI_SERVER_COMMAND, [STATS_UI_SERVER_ENTRY], hiddenSpawnOptions({
         cwd: process.cwd(),
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      }));
 
       this.statsUiProcess = child;
       this.statsUiUrl = null;
@@ -17427,7 +17464,7 @@ class CdxAppServerMcpServer {
     }
 
     this.backgroundBackendStartPromise = (async () => {
-      const child = spawn(process.execPath, [THIS_ENTRY], {
+      const child = spawn(process.execPath, [THIS_ENTRY], hiddenSpawnOptions({
         cwd: process.cwd(),
         env: {
           ...process.env,
@@ -17438,7 +17475,7 @@ class CdxAppServerMcpServer {
         },
         stdio: ['ignore', 'ignore', 'ignore'],
         detached: true,
-      });
+      }));
       child.unref();
 
       const registry = await waitForBackgroundBackendRegistry({

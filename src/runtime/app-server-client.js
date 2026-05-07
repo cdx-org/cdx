@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import process from 'node:process';
 
+import { hiddenSpawnOptions } from './child-process-options.js';
+import { commandLooksLikeCodex, resolveCodexInvocation } from './codex-command.js';
 import { LspMessageReader, writeLspMessage } from './lsp.js';
 import { normalizeToolResultResponseMessage } from './mcp-response-normalization.js';
 
@@ -49,11 +51,6 @@ function parseArgs(value) {
   return trimmed.split(/\s+/).map(segment => segment.trim()).filter(Boolean);
 }
 
-function commandLooksLikeCodex(command) {
-  const base = String(command ?? '').split(/[\\/]/).pop()?.toLowerCase() ?? '';
-  return base === 'codex' || base.startsWith('codex-') || base.startsWith('codex.');
-}
-
 function normalizeCodexAuthMode(value) {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (!normalized) return null;
@@ -91,7 +88,7 @@ function argsContainConfigKey(args, key) {
 
 export function prepareCodexAppServerArgs(command, args, { authMode = resolveCodexAuthMode() } = {}) {
   const next = Array.isArray(args) ? [...args] : ['app-server'];
-  if (!commandLooksLikeCodex(command)) return next;
+  if (!commandLooksLikeCodex(command, next)) return next;
   if (authMode !== 'chatgpt') return next;
   if (argsContainConfigKey(next, 'forced_login_method')) return next;
 
@@ -107,7 +104,7 @@ export function prepareCodexAppServerArgs(command, args, { authMode = resolveCod
 
 export class AppServerClient extends EventEmitter {
   constructor({
-    command = process.env.CODEX_BIN ?? 'codex',
+    command = undefined,
     args,
     env = {},
     log = () => {},
@@ -118,16 +115,22 @@ export class AppServerClient extends EventEmitter {
     hookContext = null,
   } = {}) {
     super();
-    this.command = command;
+    const invocation = resolveCodexInvocation({ command });
+    this.command = invocation.command;
     const envArgs = parseArgs(process.env.CODEX_APP_SERVER_ARGS ?? process.env.CODEX_ARGS);
     const inheritedEnv = { ...process.env, ...env };
+    const requestedArgs = args ?? envArgs ?? ['app-server'];
+    const invocationArgs = [
+      ...invocation.argsPrefix,
+      ...(Array.isArray(requestedArgs) ? requestedArgs : ['app-server']),
+    ];
     this.authMode = resolveCodexAuthMode(inheritedEnv);
     this.args = prepareCodexAppServerArgs(
       this.command,
-      args ?? envArgs ?? ['app-server'],
+      invocationArgs,
       { authMode: this.authMode },
     );
-    this.env = commandLooksLikeCodex(this.command)
+    this.env = commandLooksLikeCodex(this.command, this.args)
       ? prepareCodexAppServerEnv(inheritedEnv, { authMode: this.authMode })
       : inheritedEnv;
     this.log = log;
@@ -140,10 +143,10 @@ export class AppServerClient extends EventEmitter {
     this.closed = false;
     this.closeError = null;
 
-    this.proc = spawn(this.command, this.args, {
+    this.proc = spawn(this.command, this.args, hiddenSpawnOptions({
       stdio: ['pipe', 'pipe', 'pipe'],
       env: this.env,
-    });
+    }));
     this.proc.stdout.setEncoding('utf8');
     this.proc.stderr.setEncoding('utf8');
 

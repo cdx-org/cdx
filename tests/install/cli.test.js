@@ -190,6 +190,11 @@ test('install CLI removes legacy sections and installs aliases alongside the pri
 });
 
 test('install.sh preserves wrapper behavior and supports INSTALL_NODE_BIN overrides', async t => {
+  if (process.platform === 'win32') {
+    t.skip('install.sh wrapper behavior is covered by install.ps1 on Windows');
+    return;
+  }
+
   const bashAvailable = await execFileAsync('bash', ['--version']).then(
     () => true,
     () => false,

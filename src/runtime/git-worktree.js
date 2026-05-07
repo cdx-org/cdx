@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, readlink, readdir, rm, symlink, writeFile } fro
 import path from 'node:path';
 import process from 'node:process';
 
+import { hiddenSpawnOptions } from './child-process-options.js';
 import {
   defaultWorktreeRoot,
   resolveExternalizeConfig,
@@ -25,6 +26,32 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function envFlagDisabled(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return ['0', 'false', 'no', 'off', 'disabled'].includes(normalized);
+}
+
+function argsContainSafeDirectory(args) {
+  if (!Array.isArray(args)) return false;
+  for (let index = 0; index < args.length; index += 1) {
+    const current = String(args[index] ?? '');
+    if (current === '-c' && String(args[index + 1] ?? '').trim().startsWith('safe.directory=')) {
+      return true;
+    }
+    if (current.startsWith('-c safe.directory=')) return true;
+    if (current.startsWith('--config=safe.directory=')) return true;
+  }
+  return false;
+}
+
+export function buildGitCommandArgs(args, { cwd, env = process.env } = {}) {
+  const next = Array.isArray(args) ? [...args] : [];
+  if (!cwd) return next;
+  if (envFlagDisabled(env.CDX_GIT_SAFE_DIRECTORY)) return next;
+  if (argsContainSafeDirectory(next)) return next;
+  return ['-c', `safe.directory=${path.resolve(cwd)}`, ...next];
+}
+
 function isRetryableGitFailure({ command, code, stdout, stderr }) {
   if (command !== 'git') return false;
   if (![1, 128].includes(Number(code))) return false;
@@ -44,6 +71,9 @@ function isRetryableGitFailure({ command, code, stdout, stderr }) {
 
 export async function runCommand(command, args, { cwd, env, log } = {}) {
   const resolvedEnv = env ? { ...process.env, ...env } : process.env;
+  const resolvedArgs = command === 'git'
+    ? buildGitCommandArgs(args, { cwd, env: resolvedEnv })
+    : args;
   const maxAttempts = command === 'git' ? 8 : 1;
   let lastError = null;
 
@@ -52,7 +82,11 @@ export async function runCommand(command, args, { cwd, env, log } = {}) {
       return await new Promise((resolve, reject) => {
         let child;
         try {
-          child = spawn(command, args, { cwd, env: resolvedEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+          child = spawn(command, resolvedArgs, hiddenSpawnOptions({
+            cwd,
+            env: resolvedEnv,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }));
         } catch (err) {
           reject(err);
           return;
@@ -80,7 +114,7 @@ export async function runCommand(command, args, { cwd, env, log } = {}) {
             return;
           }
           const error = new Error(
-            `Command failed: ${command} ${args.join(' ')} (exit=${code})\n${trimTrailingNewline(stderr)}`,
+            `Command failed: ${command} ${resolvedArgs.join(' ')} (exit=${code})\n${trimTrailingNewline(stderr)}`,
           );
           error.code = code;
           error.stdout = stdout;

@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
+import { hiddenSpawnOptions } from './child-process-options.js';
 import { normalizeToolResultResponseMessage } from './mcp-response-normalization.js';
 import { assertFetchAvailable, createUndiciAgent } from './undici-compat.js';
 
@@ -232,7 +233,7 @@ export class BrokerSession extends EventEmitter {
       if (!config.command) {
         throw new Error('Auto-start spawn requires a command');
       }
-      const options = {
+      let options = {
         env: { ...process.env, ...config.env },
         // Default to piping broker output so we can drain/optionally log it without
         // corrupting stdio-based MCP traffic on the parent process.
@@ -241,6 +242,7 @@ export class BrokerSession extends EventEmitter {
       };
       if (config.cwd) options.cwd = config.cwd;
       if (config.shell !== undefined) options.shell = config.shell;
+      options = hiddenSpawnOptions(options);
       child = spawn(config.command, config.args ?? [], options);
     }
 

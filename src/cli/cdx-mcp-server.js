@@ -8,6 +8,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { BrokerSession } from '../runtime/broker-session.js';
+import { hiddenSpawnOptions } from '../runtime/child-process-options.js';
 import {
   commitAllowEmpty,
   commitAll,
@@ -1544,10 +1545,10 @@ class AppServerMcpClient {
       return;
     }
 
-    const child = spawn(APP_SERVER_COMMAND, [APP_SERVER_ENTRY], {
+    const child = spawn(APP_SERVER_COMMAND, [APP_SERVER_ENTRY], hiddenSpawnOptions({
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
-    });
+    }));
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', chunk => {

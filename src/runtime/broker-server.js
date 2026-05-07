@@ -6,6 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { URL } from 'node:url';
 
+import { hiddenSpawnOptions } from './child-process-options.js';
 import { LspMessageReader, writeLspMessage } from './lsp.js';
 
 function commandExists(candidate) {
@@ -271,10 +272,10 @@ export async function runBrokerServer({
 
   function createWorker() {
     const workerId = randomUUID();
-    const proc = spawn(workerCommand, workerArgs, {
+    const proc = spawn(workerCommand, workerArgs, hiddenSpawnOptions({
       stdio: ['pipe', 'pipe', 'pipe'],
       env: process.env,
-    });
+    }));
 
     const reader = new LspMessageReader(proc.stdout);
     const worker = {

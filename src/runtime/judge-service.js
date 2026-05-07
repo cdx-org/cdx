@@ -5,6 +5,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { hiddenSpawnOptions } from './child-process-options.js';
+import { resolveCodexInvocation } from './codex-command.js';
 import { loadPromptTemplate, renderPromptTemplate } from './prompt-templates.js';
 
 function isObject(value) {
@@ -138,7 +140,7 @@ export class JudgeService {
     log = () => {},
     maxConcurrency = 2,
     timeoutMs = 60_000,
-    codexBin = process.env.CDX_JUDGE_CODEX_BIN ?? 'codex',
+    codexBin = process.env.CDX_JUDGE_CODEX_BIN,
     model = null,
     effort = null,
     config = null,
@@ -196,12 +198,14 @@ export class JudgeService {
 
     const prompt = buildJudgePrompt({ ask, context, goal });
     const start = Date.now();
-    this.log(`[judge ${askId}] spawn: ${this.codexBin} ${args.join(' ')}`);
+    const invocation = resolveCodexInvocation({ command: this.codexBin });
+    const spawnArgs = [...invocation.argsPrefix, ...args];
+    this.log(`[judge ${askId}] spawn: ${invocation.command} ${spawnArgs.join(' ')}`);
 
-    const child = spawn(this.codexBin, args, {
+    const child = spawn(invocation.command, spawnArgs, hiddenSpawnOptions({
       stdio: ['pipe', 'pipe', 'pipe'],
       env: process.env,
-    });
+    }));
 
     child.stdin.setDefaultEncoding('utf8');
     child.stdin.end(`${prompt}\n`);

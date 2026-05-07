@@ -916,6 +916,89 @@ test('cdx app-server orchestrator streams events and runs agents in parallel', {
   assert.ok(startedBeforeCompleted.size >= 2);
 });
 
+test('watchdog reports no-progress for a single running task', { timeout: 30_000 }, async () => {
+  const serverPath = path.join(TEST_PROJECT_ROOT, 'src', 'cli', 'cdx-appserver-mcp-server.js');
+  const stubPath = path.join(TEST_PROJECT_ROOT, 'tests', 'app', 'fixtures', 'stubs', 'appserver-stub.js');
+  const watchdogRoot = await mkdtemp(path.join(os.tmpdir(), 'cdx-watchdog-running-test-'));
+  const watchdogRepoRoot = path.join(watchdogRoot, 'repo');
+  await initRepo(watchdogRepoRoot);
+
+  let watchdogServer = null;
+  try {
+    watchdogServer = createProcess('node', [serverPath], {
+      cwd: watchdogRepoRoot,
+      env: {
+        CODEX_BIN: 'node',
+        CODEX_APP_SERVER_ARGS: JSON.stringify([stubPath]),
+        APP_SERVER_STUB_DELAY_MS: '900',
+        APP_SERVER_STUB_TASK_COUNT: '1',
+        CDX_WORKTREE_ROOT: path.join(watchdogRoot, 'worktrees'),
+        CDX_RUN_ID: 'watchdog-running-run',
+        CDX_MAX_PARALLELISM: '1',
+        CDX_MIN_PARALLELISM: '1',
+        CDX_EVENT_STREAM: '1',
+        CDX_EVENT_STREAM_DELTAS: '0',
+        CDX_STREAM_EVENTS: '0',
+        CDX_STATS_AUTO_OPEN: '0',
+        CDX_NO_PROGRESS_TIMEOUT_MS: '50',
+        CDX_WATCHDOG_INTERVAL_MS: '50',
+        CDX_WATCHDOG_INTERVENTION_COOLDOWN_MS: '0',
+        CDX_WATCHDOG_INTERVENTION_INTERVAL_MS: '50',
+        CDX_DYNAMIC_REPLAN_CHECK_INTERVAL_MS: '25',
+        CDX_TASK_IDLE_WARN_MS: '0',
+        CDX_TASK_IDLE_TIMEOUT_MS: '0',
+      },
+    });
+    const watchdogReader = createMessageReader(watchdogServer);
+
+    const initRequest = {
+      jsonrpc: '2.0',
+      id: nextId(),
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        clientInfo: { name: 'watchdog-running-test-client', version: '0.0.1' },
+      },
+    };
+    await sendRequest(watchdogServer, initRequest);
+    await watchdogReader.next(msg => msg.id === initRequest.id, 5000);
+
+    const callRequest = {
+      jsonrpc: '2.0',
+      id: nextId(),
+      method: 'tools/call',
+      params: {
+        name: 'run',
+        arguments: {
+          prompt: 'Run one slow task so watchdog can observe no progress',
+          repoRoot: watchdogRepoRoot,
+          maxParallelism: 1,
+          minParallelism: 1,
+        },
+      },
+    };
+
+    await sendRequest(watchdogServer, callRequest);
+    const callResponse = await watchdogReader.next(msg => msg.id === callRequest.id, 30_000);
+    assert.ok(callResponse.result);
+
+    const events = watchdogReader.allMessages
+      .filter(msg => msg.method === 'cdx/event')
+      .map(msg => msg.params ?? {});
+    assert.ok(
+      events.some(evt => evt.type === 'watchdog.no_progress' && evt.running === 1),
+      `Expected watchdog.no_progress event, got ${events.map(evt => evt.type).join(', ')}`,
+    );
+    assert.ok(
+      events.some(evt => evt.type === 'watchdog.report' || evt.type === 'watchdog.intervention'),
+      `Expected watchdog report/intervention event, got ${events.map(evt => evt.type).join(', ')}`,
+    );
+  } finally {
+    await stopProcess(watchdogServer);
+    await rm(watchdogRoot, { recursive: true, force: true });
+  }
+});
+
 test('cdx app-server orchestrator can auto-commit a dirty worktree before running', { timeout: 30_000 }, async () => {
   const serverPath = path.join(TEST_PROJECT_ROOT, 'src', 'cli', 'cdx-appserver-mcp-server.js');
   const stubPath = path.join(TEST_PROJECT_ROOT, 'tests', 'app', 'fixtures', 'stubs', 'appserver-stub.js');

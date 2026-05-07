@@ -64,3 +64,22 @@ test('commitAll stages checklist artifacts outside sparse-checkout roots', async
   const changedFiles = await runGit(repoRoot, ['show', '--name-only', '--pretty=format:', 'HEAD']);
   assert.match(changedFiles, /\.keepdoing\/target-a\/collect-evidence\/cycle-001\.md/);
 });
+
+test('buildGitCommandArgs adds cwd as a command-scoped safe.directory', async t => {
+  const fixture = await createRuntimeFixture(t);
+  const { buildGitCommandArgs } = await fixture.importRuntime('git-worktree.js');
+  const cwd = path.join(os.tmpdir(), 'sandbox-owned-repo');
+
+  assert.deepEqual(
+    buildGitCommandArgs(['status', '--porcelain'], { cwd, env: {} }),
+    ['-c', `safe.directory=${path.resolve(cwd)}`, 'status', '--porcelain'],
+  );
+  assert.deepEqual(
+    buildGitCommandArgs(['-c', 'safe.directory=*', 'status'], { cwd, env: {} }),
+    ['-c', 'safe.directory=*', 'status'],
+  );
+  assert.deepEqual(
+    buildGitCommandArgs(['status'], { cwd, env: { CDX_GIT_SAFE_DIRECTORY: '0' } }),
+    ['status'],
+  );
+});
