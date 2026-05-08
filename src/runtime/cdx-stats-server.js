@@ -5249,7 +5249,7 @@ ${renderDashboardLayout()}
         if (!Array.isArray(watchdogTurnTabs) || watchdogTurnTabs.length === 0) {
           setWatchdogTurnBrowserVisible(false);
           watchdogTurnTabsEl.innerHTML = '';
-          watchdogTurnPanelEl.textContent = 'No watchdog turn logs yet';
+          watchdogTurnPanelEl.textContent = 'No orchestrator turn logs yet';
           return;
         }
 
@@ -5407,7 +5407,9 @@ ${renderDashboardLayout()}
           setWatchdogTurnMessage('No active run', { visible: false });
           return;
         }
-        const explicitWatchdogAgent = pickAgentByKind(run?.agents ?? [], 'watchdog');
+        const explicitWatchdogAgent =
+          pickAgentByKind(run?.agents ?? [], 'orchestrator')
+          ?? pickAgentByKind(run?.agents ?? [], 'watchdog');
         const hasWatchdogLogs = Boolean(
           run?.watchdogLatest?.text
           || run?.watchdogLatest?.fullText
@@ -5416,12 +5418,12 @@ ${renderDashboardLayout()}
         );
         const watchdogAgent = explicitWatchdogAgent ?? (hasWatchdogLogs
           ? {
-            agentId: 'watchdog',
+            agentId: 'orchestrator',
             status: run?.watchdogLatest?.live === true ? 'running' : 'idle',
           }
           : null);
         if (!watchdogAgent?.agentId) {
-          setWatchdogTurnMessage('No watchdog agent in active run', { visible: false });
+          setWatchdogTurnMessage('No orchestrator agent in active run', { visible: false });
           return;
         }
 
@@ -5485,7 +5487,7 @@ ${renderDashboardLayout()}
             watchdogAgent.status,
           );
           if (!Array.isArray(turns) || turns.length === 0) {
-            setWatchdogTurnMessage('No watchdog turn logs yet');
+            setWatchdogTurnMessage('No orchestrator turn logs yet');
             return;
           }
 
@@ -5511,7 +5513,12 @@ ${renderDashboardLayout()}
         if (phase.includes('plan') || agentId.includes('planner')) return 'planner';
         if (phase.includes('scout') || agentId.includes('scout')) return 'scout';
         if (phase.includes('runner') || agentId === 'runner') return 'runner';
-        if (phase.includes('watchdog') || agentId.includes('watchdog')) return 'watchdog';
+        if (
+          phase.includes('orchestrator')
+          || agentId.includes('orchestrator')
+          || phase.includes('watchdog')
+          || agentId.includes('watchdog')
+        ) return 'orchestrator';
         if (phase.includes('merge') || agentId.includes('merge')) return 'merge';
         if (phase.includes('review')) return 'review';
         if (phase.includes('checkpoint') || phase.includes('validate')) return 'checkpoint';
@@ -5930,7 +5937,7 @@ ${renderDashboardLayout()}
         fileEl.textContent = '';
         gitStatusEl.textContent = '';
         if (testGitTreeEl) testGitTreeEl.textContent = '';
-        setWatchdogTurnMessage('Loading watchdog turn logs...', { visible: true });
+        setWatchdogTurnMessage('Loading orchestrator turn logs...', { visible: true });
 
         try {
           await refreshState({ skipAutoFollow: true });
@@ -6484,7 +6491,7 @@ ${renderDashboardLayout()}
           const kind = deriveAgentKind(agent);
           if (kind === 'planner') return 0;
           if (kind === 'runner') return 1;
-          if (kind === 'watchdog') return 2;
+          if (kind === 'orchestrator' || kind === 'watchdog') return 2;
           const status = String(agent?.status ?? '');
           if (status === 'running' || status === 'disposing') return 3;
           if (status === 'disposed') return 4;
@@ -6550,12 +6557,12 @@ ${renderDashboardLayout()}
           }
           renderCard(
             { titleEl: cardHeroTitle, tagsEl: cardHeroTags, metaEl: cardHeroMeta, textEl: cardHeroText, rootEl: cardHero },
-            { title: 'Watchdog Agent', tags: [], meta: 'No active run.', text: '', hasData: false },
+            { title: 'Orchestrator Agent', tags: [], meta: 'No active run.', text: '', hasData: false },
           );
           return;
         }
 
-        const watchdogAgent = pickAgentByKind(agents, 'watchdog');
+        const watchdogAgent = pickAgentByKind(agents, 'orchestrator') ?? pickAgentByKind(agents, 'watchdog');
         const plannerAgent = pickAgentByKind(agents, 'planner');
         const heroAgent = watchdogAgent;
 
@@ -6567,7 +6574,7 @@ ${renderDashboardLayout()}
         }
 
         const heroStatus = heroAgent?.status ?? 'idle';
-        const heroKind = heroAgent ? deriveAgentKind(heroAgent) : 'watchdog';
+        const heroKind = heroAgent ? deriveAgentKind(heroAgent) : 'orchestrator';
         const heroTagInfo = statusBadge(heroStatus);
         const watchdogLatest = run?.watchdogLatest ?? null;
         const hasWatchdogData = Boolean(
@@ -6585,7 +6592,7 @@ ${renderDashboardLayout()}
         const heroModel = formatAgentModelLabel(heroAgent);
         const heroLastSource = watchdogLatest?.at ?? heroAgent?.lastActivityAt ?? null;
         const heroLast = heroLastSource ? formatAgo(heroLastSource) : '-';
-        const heroTitleParts = ['Watchdog Agent'];
+        const heroTitleParts = ['Orchestrator Agent'];
         if (heroModel) heroTitleParts.push(heroModel);
         if (heroLast && heroLast !== '-') {
           heroTitleParts.push('last ' + heroLast);
@@ -6613,7 +6620,7 @@ ${renderDashboardLayout()}
           {
             title: heroTitleParts.join(' - '),
             tags: heroTags,
-            meta: heroMetaParts.join(' · ') || (hasWatchdogData ? 'watchdog logs' : 'No watchdog yet.'),
+            meta: heroMetaParts.join(' · ') || (hasWatchdogData ? 'orchestrator logs' : 'No orchestrator yet.'),
             text: heroText,
             hasData: hasWatchdogData,
           },
@@ -10818,9 +10825,9 @@ export class CdxStatsServer {
       tokens: { input: 0, cachedInput: 0, output: 0 },
     };
     const watchdogAgent = {
-      agentId: 'watchdog',
+      agentId: 'orchestrator',
       taskId: null,
-      phase: 'watchdog',
+      phase: 'orchestrator',
       status: 'running',
       startedAt: run.createdAt,
       finishedAt: null,
@@ -10829,7 +10836,7 @@ export class CdxStatsServer {
       lastActivityAt: now - 2_000,
       lastActivity: 'monitoring worker progress and merge queue',
       lastActivityKind: 'status',
-      summaryTextDelta: 'Watchdog active in stats test mode',
+      summaryTextDelta: 'Orchestrator active in stats test mode',
       summaryTextDeltaAt: now - 2_000,
       lastPromptText: 'Track stalled tasks and merge risk; intervene when needed.',
       lastPromptAt: now - 6_000,
@@ -10840,7 +10847,7 @@ export class CdxStatsServer {
     run.agents = new Map([
       ['server', serverAgent],
       ['planner', plannerAgent],
-      ['watchdog', watchdogAgent],
+      ['orchestrator', watchdogAgent],
     ]);
 
     run.logs = new Map();
@@ -10857,9 +10864,9 @@ export class CdxStatsServer {
 
     addLog('server', 'stats test mode enabled');
     addLog('planner', `planned ${workerCount} synthetic worker tasks`);
-    addLog('watchdog', 'watchdog started');
-    addLog('watchdog', 'turn 1: scanning scheduler for stalled tasks');
-    addLog('watchdog', 'turn 1: no stalled task, monitoring continues');
+    addLog('orchestrator', 'orchestrator started');
+    addLog('orchestrator', 'turn 1: scanning scheduler for stalled tasks');
+    addLog('orchestrator', 'turn 1: no stalled task, monitoring continues');
 
     for (let i = 1; i <= workerCount; i += 1) {
       const n = String(i).padStart(2, '0');
@@ -10982,7 +10989,7 @@ export class CdxStatsServer {
       output: 3600,
     });
     addTokenSample({
-      agentId: 'watchdog',
+      agentId: 'orchestrator',
       at: now - 9 * 60 * 1000,
       input: 7400,
       cachedInput: 2100,
@@ -11023,12 +11030,12 @@ export class CdxStatsServer {
       keepWorktrees: false,
     });
     pushEvent({ type: 'plan.completed', runId, taskCount: workerCount, parallelism: workerCount });
-    pushEvent({ type: 'turn.completed', runId, agentId: 'watchdog', turnId: 'watchdog-turn-1' });
-    addLog('watchdog', 'turn 2: queue depth stable, checking merge conflicts');
-    addLog('watchdog', 'turn 2: no conflict detected, keeping workers active');
-    pushEvent({ type: 'turn.completed', runId, agentId: 'watchdog', turnId: 'watchdog-turn-2' });
-    addLog('watchdog', 'turn 3: worker-07 latency spike observed; collecting extra telemetry');
-    addLog('watchdog', 'turn 3: intervention not required; continue monitoring');
+    pushEvent({ type: 'turn.completed', runId, agentId: 'orchestrator', turnId: 'orchestrator-turn-1' });
+    addLog('orchestrator', 'turn 2: queue depth stable, checking merge conflicts');
+    addLog('orchestrator', 'turn 2: no conflict detected, keeping workers active');
+    pushEvent({ type: 'turn.completed', runId, agentId: 'orchestrator', turnId: 'orchestrator-turn-2' });
+    addLog('orchestrator', 'turn 3: worker-07 latency spike observed; collecting extra telemetry');
+    addLog('orchestrator', 'turn 3: intervention not required; continue monitoring');
     for (let i = 1; i <= workerCount; i += 1) {
       const n = String(i).padStart(2, '0');
       const taskId = `worker-${n}`;
@@ -11762,7 +11769,7 @@ export class CdxStatsServer {
         run.tasks.set(taskId, task);
       }
 
-      if (agentId === 'watchdog') {
+      if (agentId === 'watchdog' || agentId === 'orchestrator') {
         this.#recordCompletedWatchdogTurn(run, payload, eventEntry);
       }
     }
@@ -12490,14 +12497,20 @@ export class CdxStatsServer {
       maxLines: PRE_TASK_OUTPUT_TAIL_LINES,
       maxCharsPerLine: PRE_TASK_OUTPUT_TAIL_CHARS,
     });
-    const watchdogLogs = run.logs.get('watchdog')?.items ?? [];
+    const watchdogLogs = [
+      ...(run.logs.get('orchestrator')?.items ?? []),
+      ...(run.logs.get('watchdog')?.items ?? []),
+    ].sort((left, right) => (Number(left?.id) || 0) - (Number(right?.id) || 0));
     const watchdogOutputTail = buildTaskOutputTail(watchdogLogs, {
       maxLines: PRE_TASK_OUTPUT_TAIL_LINES,
       maxCharsPerLine: PRE_TASK_OUTPUT_TAIL_CHARS,
     });
-    const watchdogAgent = agents.find(agent => String(agent?.agentId ?? '') === 'watchdog') ?? null;
+    const watchdogAgent = agents.find(agent => {
+      const agentId = String(agent?.agentId ?? '');
+      return agentId === 'orchestrator' || agentId === 'watchdog';
+    }) ?? null;
     const watchdogLive = agents.some(agent =>
-      String(agent?.agentId ?? '') === 'watchdog'
+      ['orchestrator', 'watchdog'].includes(String(agent?.agentId ?? ''))
       && (agent?.status === 'running' || agent?.status === 'disposing')
     );
     const watchdogTurns = buildWatchdogTurnsSnapshot(run.watchdogTurns?.items ?? [], watchdogLogs, {
@@ -13815,7 +13828,7 @@ export class CdxStatsServer {
   #recordCompletedWatchdogTurn(run, payload, eventEntry) {
     if (!run || !(run.watchdogTurns instanceof RingBuffer)) return;
     const agentId = String(payload?.agentId ?? '').trim();
-    if (agentId !== 'watchdog') return;
+    if (agentId !== 'watchdog' && agentId !== 'orchestrator') return;
 
     const logStore = run.logs.get(agentId);
     const completedTurns = run.watchdogTurns.items;

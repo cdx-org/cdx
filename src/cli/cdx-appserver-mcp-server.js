@@ -219,15 +219,26 @@ const DEFAULT_MODEL =
   process.env.CDX_DEFAULT_MODEL ?? process.env.CDX_MODEL ?? DEFAULT_MODEL_SPECS[0].model;
 const DEFAULT_PLANNER_MODEL =
   process.env.CDX_PLANNER_MODEL_DEFAULT ?? 'gpt-5.5';
-const DEFAULT_WATCHDOG_MODEL =
-  process.env.CDX_DEFAULT_WATCHDOG_MODEL
+const DEFAULT_ORCHESTRATOR_MODEL =
+  process.env.CDX_DEFAULT_ORCHESTRATOR_MODEL
+  ?? process.env.CDX_ORCHESTRATOR_MODEL_DEFAULT
+  ?? process.env.CDX_ORCHESTRATOR_MODEL
+  ?? process.env.CDX_DEFAULT_WATCHDOG_MODEL
   ?? process.env.CDX_WATCHDOG_MODEL_DEFAULT
   ?? process.env.CDX_WATCHDOG_MODEL
   ?? 'gpt-5.5';
-const WATCHDOG_STEER_COOLDOWN_MS = Math.max(
+const ORCHESTRATOR_STEER_COOLDOWN_MS = Math.max(
   1_000,
-  Number.parseInt(process.env.CDX_WATCHDOG_STEER_COOLDOWN_MS ?? '60000', 10) || 60_000,
+  Number.parseInt(
+    process.env.CDX_ORCHESTRATOR_STEER_COOLDOWN_MS
+      ?? process.env.CDX_WATCHDOG_STEER_COOLDOWN_MS
+      ?? '60000',
+    10,
+  ) || 60_000,
 );
+const WATCHDOG_STEER_COOLDOWN_MS =
+  ORCHESTRATOR_STEER_COOLDOWN_MS;
+/* Legacy aliases are intentionally accepted while the runtime surface moves to orchestrator naming. */
 const RUNTIME_INJECTION_ACK_TIMEOUT_MS = Math.max(
   1_000,
   Number.parseInt(process.env.CDX_RUNTIME_INJECTION_ACK_TIMEOUT_MS ?? '15000', 10) || 15_000,
@@ -1456,8 +1467,16 @@ const DEFAULT_TASK_EFFORT =
   normalizeReasoningEffort(process.env.CDX_DEFAULT_TASK_EFFORT ?? 'xhigh') || 'xhigh';
 const DEFAULT_PLANNER_EFFORT =
   normalizeReasoningEffort(process.env.CDX_PLANNER_EFFORT ?? 'medium') || 'medium';
-const DEFAULT_WATCHDOG_EFFORT =
-  normalizeReasoningEffort(process.env.CDX_WATCHDOG_EFFORT ?? 'medium') || 'medium';
+const DEFAULT_ORCHESTRATOR_EFFORT =
+  normalizeReasoningEffort(
+    process.env.CDX_ORCHESTRATOR_EFFORT
+      ?? process.env.CDX_ORCHESTRATOR_MODEL_REASONING_EFFORT
+      ?? process.env.CDX_ORCHESTRATOR_REASONING_EFFORT
+      ?? process.env.CDX_WATCHDOG_EFFORT
+      ?? process.env.CDX_WATCHDOG_MODEL_REASONING_EFFORT
+      ?? process.env.CDX_WATCHDOG_REASONING_EFFORT
+      ?? 'medium',
+  ) || 'medium';
 const STALL_RECOVERY_EFFORT =
   normalizeReasoningEffort(process.env.CDX_STALL_RECOVERY_EFFORT ?? 'medium') || 'medium';
 const STALL_RECOVERY_RETRY_EFFORT =
@@ -1649,7 +1668,12 @@ const TASK_IDLE_TIMEOUT_MS = TASK_IDLE_TIMEOUT_RAW_MS === 0
   ? 0
   : Math.max(TASK_IDLE_WARN_MS, TASK_IDLE_TIMEOUT_RAW_MS);
 const WATCHDOG_INTERVAL_MS = (() => {
-  const parsed = Number.parseInt(process.env.CDX_WATCHDOG_INTERVAL_MS ?? `${5 * 60 * 1000}`, 10);
+  const parsed = Number.parseInt(
+    process.env.CDX_ORCHESTRATOR_INTERVAL_MS
+      ?? process.env.CDX_WATCHDOG_INTERVAL_MS
+      ?? `${5 * 60 * 1000}`,
+    10,
+  );
   if (!Number.isFinite(parsed)) return 5 * 60 * 1000;
   return Math.max(0, parsed);
 })();
@@ -1658,69 +1682,123 @@ const NO_PROGRESS_TIMEOUT_MS = (() => {
   if (!Number.isFinite(parsed)) return 5 * 60 * 1000;
   return Math.max(0, parsed);
 })();
-const WATCHDOG_INTERVENTION_ENABLED = (process.env.CDX_WATCHDOG_INTERVENTION ?? '1') === '1';
+const WATCHDOG_INTERVENTION_ENABLED =
+  (process.env.CDX_ORCHESTRATOR_INTERVENTION ?? process.env.CDX_WATCHDOG_INTERVENTION ?? '1') === '1';
 const WATCHDOG_INTERVENTION_COOLDOWN_MS = Math.max(
   0,
-  Number.parseInt(process.env.CDX_WATCHDOG_INTERVENTION_COOLDOWN_MS ?? `${2 * 60 * 1000}`, 10)
+  Number.parseInt(
+    process.env.CDX_ORCHESTRATOR_INTERVENTION_COOLDOWN_MS
+      ?? process.env.CDX_WATCHDOG_INTERVENTION_COOLDOWN_MS
+      ?? `${2 * 60 * 1000}`,
+    10,
+  )
     || 2 * 60 * 1000,
 );
 const WATCHDOG_INTERVENTION_INTERVAL_MS = Math.max(
   0,
   Number.parseInt(
-    process.env.CDX_WATCHDOG_INTERVENTION_INTERVAL_MS ?? `${WATCHDOG_INTERVAL_MS}`,
+    process.env.CDX_ORCHESTRATOR_INTERVENTION_INTERVAL_MS
+      ?? process.env.CDX_WATCHDOG_INTERVENTION_INTERVAL_MS
+      ?? `${WATCHDOG_INTERVAL_MS}`,
     10,
   ) || WATCHDOG_INTERVAL_MS,
 );
 const WATCHDOG_MERGE_TIMEOUT_MS = Math.max(
   0,
   Number.parseInt(
-    process.env.CDX_WATCHDOG_MERGE_TIMEOUT_MS ?? `${2 * 60 * 1000}`,
+    process.env.CDX_ORCHESTRATOR_MERGE_TIMEOUT_MS
+      ?? process.env.CDX_WATCHDOG_MERGE_TIMEOUT_MS
+      ?? `${2 * 60 * 1000}`,
     10,
   ) || 2 * 60 * 1000,
 );
 const WATCHDOG_MERGE_MAX_RETRIES = Math.max(
   0,
-  Number.parseInt(process.env.CDX_WATCHDOG_MERGE_MAX_RETRIES ?? '3', 10) || 0,
+  Number.parseInt(
+    process.env.CDX_ORCHESTRATOR_MERGE_MAX_RETRIES
+      ?? process.env.CDX_WATCHDOG_MERGE_MAX_RETRIES
+      ?? '3',
+    10,
+  ) || 0,
 );
 const WATCHDOG_MERGE_ASK_RECOVERY_ENABLED =
-  coerceBoolean(process.env.CDX_WATCHDOG_MERGE_ASK_RECOVERY) ?? true;
+  coerceBoolean(
+    process.env.CDX_ORCHESTRATOR_MERGE_ASK_RECOVERY
+      ?? process.env.CDX_WATCHDOG_MERGE_ASK_RECOVERY,
+  ) ?? true;
 const WATCHDOG_MERGE_ASK_MIN_AGE_MS = Math.max(
   0,
-  Number.parseInt(process.env.CDX_WATCHDOG_MERGE_ASK_MIN_AGE_MS ?? `${60 * 1000}`, 10)
+  Number.parseInt(
+    process.env.CDX_ORCHESTRATOR_MERGE_ASK_MIN_AGE_MS
+      ?? process.env.CDX_WATCHDOG_MERGE_ASK_MIN_AGE_MS
+      ?? `${60 * 1000}`,
+    10,
+  )
     || 60 * 1000,
 );
 const WATCHDOG_MERGE_TAKEOVER_MIN_ASKS = Math.max(
   2,
-  Number.parseInt(process.env.CDX_WATCHDOG_MERGE_TAKEOVER_MIN_ASKS ?? '2', 10) || 2,
+  Number.parseInt(
+    process.env.CDX_ORCHESTRATOR_MERGE_TAKEOVER_MIN_ASKS
+      ?? process.env.CDX_WATCHDOG_MERGE_TAKEOVER_MIN_ASKS
+      ?? '2',
+    10,
+  ) || 2,
 );
 const WATCHDOG_RESPAWN_MAX = Math.max(
   0,
-  Number.parseInt(process.env.CDX_WATCHDOG_RESPAWN_MAX ?? '2', 10) || 2,
+  Number.parseInt(
+    process.env.CDX_ORCHESTRATOR_RESPAWN_MAX
+      ?? process.env.CDX_WATCHDOG_RESPAWN_MAX
+      ?? '2',
+    10,
+  ) || 2,
 );
 const WATCHDOG_RESPAWN_MAX_PER_WAVE = Math.max(
   1,
-  Number.parseInt(process.env.CDX_WATCHDOG_RESPAWN_MAX_PER_WAVE ?? '2', 10) || 2,
+  Number.parseInt(
+    process.env.CDX_ORCHESTRATOR_RESPAWN_MAX_PER_WAVE
+      ?? process.env.CDX_WATCHDOG_RESPAWN_MAX_PER_WAVE
+      ?? '2',
+    10,
+  ) || 2,
 );
 const WATCHDOG_RESPAWN_COOLDOWN_MS = Math.max(
   0,
-  Number.parseInt(process.env.CDX_WATCHDOG_RESPAWN_COOLDOWN_MS ?? `${5 * 60 * 1000}`, 10)
+  Number.parseInt(
+    process.env.CDX_ORCHESTRATOR_RESPAWN_COOLDOWN_MS
+      ?? process.env.CDX_WATCHDOG_RESPAWN_COOLDOWN_MS
+      ?? `${5 * 60 * 1000}`,
+    10,
+  )
     || 5 * 60 * 1000,
 );
-const WATCHDOG_RETRY_FAILED_ENABLED = coerceBoolean(process.env.CDX_WATCHDOG_RETRY_FAILED) ?? true;
+const WATCHDOG_RETRY_FAILED_ENABLED =
+  coerceBoolean(process.env.CDX_ORCHESTRATOR_RETRY_FAILED ?? process.env.CDX_WATCHDOG_RETRY_FAILED)
+  ?? true;
 const WATCHDOG_RETRY_FAILED_MAX = Math.max(
   0,
-  Number.parseInt(process.env.CDX_WATCHDOG_RETRY_FAILED_MAX ?? `${WATCHDOG_RESPAWN_MAX}`, 10)
+  Number.parseInt(
+    process.env.CDX_ORCHESTRATOR_RETRY_FAILED_MAX
+      ?? process.env.CDX_WATCHDOG_RETRY_FAILED_MAX
+      ?? `${WATCHDOG_RESPAWN_MAX}`,
+    10,
+  )
     || WATCHDOG_RESPAWN_MAX,
 );
 const WATCHDOG_RETRY_FAILED_COOLDOWN_MS = Math.max(
   0,
   Number.parseInt(
-    process.env.CDX_WATCHDOG_RETRY_FAILED_COOLDOWN_MS ?? '0',
+    process.env.CDX_ORCHESTRATOR_RETRY_FAILED_COOLDOWN_MS
+      ?? process.env.CDX_WATCHDOG_RETRY_FAILED_COOLDOWN_MS
+      ?? '0',
     10,
   ) || 0,
 );
 const WATCHDOG_RESPAWN_IDLE_MS = (() => {
-  const raw = process.env.CDX_WATCHDOG_RESPAWN_IDLE_MS;
+  const raw =
+    process.env.CDX_ORCHESTRATOR_RESPAWN_IDLE_MS
+    ?? process.env.CDX_WATCHDOG_RESPAWN_IDLE_MS;
   if (raw !== undefined) {
     const parsed = Number.parseInt(raw, 10);
     if (Number.isFinite(parsed)) return Math.max(0, parsed);
@@ -1731,7 +1809,9 @@ const WATCHDOG_RESPAWN_IDLE_MS = (() => {
   return Math.max(TASK_IDLE_WARN_MS, 30 * 60 * 1000);
 })();
 const WATCHDOG_RESPAWN_BLOCKED_IDLE_MS = (() => {
-  const raw = process.env.CDX_WATCHDOG_RESPAWN_BLOCKED_IDLE_MS;
+  const raw =
+    process.env.CDX_ORCHESTRATOR_RESPAWN_BLOCKED_IDLE_MS
+    ?? process.env.CDX_WATCHDOG_RESPAWN_BLOCKED_IDLE_MS;
   if (raw !== undefined) {
     const parsed = Number.parseInt(raw, 10);
     if (Number.isFinite(parsed)) return Math.max(0, parsed);
@@ -1748,7 +1828,9 @@ const WATCHDOG_RESPAWN_BLOCKED_IDLE_MS = (() => {
   return Math.min(WATCHDOG_RESPAWN_IDLE_MS, derived);
 })();
 const WATCHDOG_RESPAWN_FULL_QUEUE_IDLE_MS = (() => {
-  const raw = process.env.CDX_WATCHDOG_RESPAWN_FULL_QUEUE_IDLE_MS;
+  const raw =
+    process.env.CDX_ORCHESTRATOR_RESPAWN_FULL_QUEUE_IDLE_MS
+    ?? process.env.CDX_WATCHDOG_RESPAWN_FULL_QUEUE_IDLE_MS;
   if (raw !== undefined) {
     const parsed = Number.parseInt(raw, 10);
     if (Number.isFinite(parsed)) return Math.max(0, parsed);
@@ -2135,7 +2217,10 @@ function buildPlannerPathLayoutLines(pathLayout) {
   const lines = [];
   const roots = formatRepoRoots(pathLayout.allowedRoots);
   if (roots.length > 0) {
-    lines.push(`- Restrict ownership.paths and touched files to sparse-checkout roots: ${roots.join(', ')}.`);
+    lines.push(
+      `- Prefer ownership.paths inside sparse-checkout roots when they contain the relevant code/assets: ${roots.join(', ')}. `
+        + 'If the goal clearly requires project data, scenes, assets, or other runtime resources outside those roots, include those paths explicitly.',
+    );
   }
   if (pathLayout.preferredCodeRoot === 'src') {
     lines.push('- Repository code root is src/; put new packages/modules under src/<package>/..., not at the repository top level.');
@@ -2808,11 +2893,11 @@ function buildTaskFailureCoordinatorArtifact(task, state, status = 'failed') {
 
 function buildWatchdogCoordinatorArtifact({ report, wave, reason } = {}) {
   if (!report || typeof report !== 'object') {
-    const summary = `Watchdog wave ${wave ?? '?'}`;
+    const summary = `Orchestrator wave ${wave ?? '?'}`;
     return normalizeCoordinatorArtifact({
       interventions: [
         {
-          source: 'watchdog',
+          source: 'orchestrator',
           summary,
           reason: reason ?? null,
         },
@@ -2826,19 +2911,19 @@ function buildWatchdogCoordinatorArtifact({ report, wave, reason } = {}) {
   const summary =
     typeof report.summary === 'string' && report.summary.trim()
       ? report.summary.trim()
-      : `Watchdog wave ${wave ?? '?'}`;
+      : `Orchestrator wave ${wave ?? '?'}`;
 
   return normalizeCoordinatorArtifact({
     sharedContext: evidence,
     risks: likelyCauses,
     interventions: [
       {
-        source: 'watchdog',
+        source: 'orchestrator',
         summary,
         reason: reason ?? null,
       },
       ...nextActions.map(action => ({
-        source: 'watchdog',
+        source: 'orchestrator',
         summary: action,
         reason: reason ?? null,
       })),
@@ -3038,7 +3123,7 @@ function buildWatchdogCoordinatorEvent({
 } = {}) {
   const normalizedReport = report && typeof report === 'object' ? report : {};
   return {
-    summary: `Watchdog wave ${wave ?? '?'} assessed scheduler pressure`,
+    summary: `Orchestrator wave ${wave ?? '?'} assessed scheduler pressure`,
     details: {
       trigger: clipText(reason ?? '', 220) || null,
       reportSummary: clipText(normalizedReport.summary ?? '', 260) || null,
@@ -3584,6 +3669,11 @@ function isResolvedTaskStatus(status) {
     || normalized === 'blocked'
     || normalized === 'superseded'
   );
+}
+
+function isOrchestratorRole(role) {
+  const normalized = typeof role === 'string' ? role.trim().toLowerCase() : '';
+  return normalized === 'orchestrator' || normalized === 'watchdog';
 }
 
 function isFailureTaskStatus(status) {
@@ -4398,11 +4488,13 @@ class AppServerCdxOrchestrator {
     this.modelOverride = null;
     this.plannerModelOverride = null;
     this.taskModelOverride = null;
+    this.orchestratorModelOverride = null;
     this.watchdogModelOverride = null;
     this.effortOverride = null;
     this.plannerEffortOverride = null;
     this.taskEffortOverride = null;
     this.judgeEffortOverride = null;
+    this.orchestratorEffortOverride = null;
     this.watchdogEffortOverride = null;
     this.sandboxOverride = null;
     this.webSearchModeOverride = null;
@@ -4835,9 +4927,9 @@ class AppServerCdxOrchestrator {
       };
     }
 
-    if (phase === 'watchdog') {
+    if (phase === 'orchestrator' || phase === 'watchdog') {
       return {
-        kind: 'watchdog',
+        kind: 'orchestrator',
         allowInternalDeps: true,
         allowedExternalDepIds: completedTaskIds,
         dropDepIds: [],
@@ -4994,6 +5086,7 @@ class AppServerCdxOrchestrator {
     cwd,
     text,
     agentId = 'coordinator',
+    phase = 'coordinator',
     taskId = null,
     emitEvent,
     model,
@@ -5017,7 +5110,7 @@ class AppServerCdxOrchestrator {
           type: 'appserver.notification',
           agentId,
           taskId: taskId ?? null,
-          phase: 'coordinator',
+          phase,
           method,
           params,
         });
@@ -5135,7 +5228,7 @@ class AppServerCdxOrchestrator {
         type: 'turn.completed',
         agentId,
         taskId: taskId ?? null,
-        phase: 'coordinator',
+        phase,
         threadId,
         turnId,
         status: turnCollector.status ?? null,
@@ -5278,6 +5371,7 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
         cwd: runCwd,
         text: promptText,
         agentId,
+        phase: 'coordinator',
         taskId: null,
         emitEvent,
         model: plannerModel,
@@ -5416,7 +5510,11 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
     }
 
     return this.#queueCoordinatorUpdate(async () => {
-      const agentId = 'coordinator';
+      const eventPhase = typeof phase === 'string' && phase.trim() ? phase.trim() : 'coordinator';
+      const agentId =
+        isOrchestratorRole(eventPhase) || isOrchestratorRole(source) || isOrchestratorRole(eventType)
+          ? 'orchestrator'
+          : 'coordinator';
       const client = this.coordinatorClient;
       const threadId = this.coordinatorThreadId;
       if (!client || !threadId) {
@@ -5486,7 +5584,7 @@ ${this.#formatCoordinatorSteerProposal(steerProposal)}
 Coordinator operating rules:
 ${COORDINATOR_COMMON_RULES}
 - Prefer merging the smallest set of new facts that improves the next handoff or steering decision.
-- Record structured coordinator/watchdog decisions under interventions when they are durable.
+- Record structured orchestrator decisions under interventions when they are durable.
 - ${allowActions ? 'Actions are enabled for this event when they materially improve execution.' : 'This is a read-only result-feedback event. Update artifact/steer only and leave actions empty.'}
 ${COORDINATOR_STEER_RULES}
 
@@ -5499,6 +5597,7 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
         cwd: this.activeRepoRoot ?? process.cwd(),
         text: promptText,
         agentId,
+        phase: eventPhase,
         taskId,
         emitEvent,
         model: plannerModel,
@@ -5514,7 +5613,7 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
         artifact: nextArtifact,
         source,
         emitEvent,
-        phase: 'coordinator',
+        phase: eventPhase,
         wave,
         broadcast: false,
       });
@@ -5581,8 +5680,8 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
     emitEvent,
     wave,
     reason,
-    source = 'watchdog',
-    eventType = 'watchdog.steer.queued',
+    source = 'orchestrator',
+    eventType = 'orchestrator.steer.queued',
   } = {}) {
     const normalized = steer && typeof steer === 'object' ? steer : {};
     const now = Date.now();
@@ -5656,8 +5755,8 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
       emitEvent,
       wave,
       reason,
-      source: 'watchdog',
-      eventType: 'watchdog.steer.queued',
+      source: 'orchestrator',
+      eventType: 'orchestrator.steer.queued',
     });
   }
 
@@ -5768,11 +5867,13 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
     model,
     plannerModel,
     taskModel,
+    orchestratorModel,
     watchdogModel,
     effort,
     plannerEffort,
     taskEffort,
     judgeEffort,
+    orchestratorEffort,
     watchdogEffort,
     sandbox,
     webSearch,
@@ -6105,8 +6206,13 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
       typeof plannerModel === 'string' && plannerModel.trim() ? plannerModel.trim() : null;
     this.taskModelOverride =
       typeof taskModel === 'string' && taskModel.trim() ? taskModel.trim() : null;
-    this.watchdogModelOverride =
-      typeof watchdogModel === 'string' && watchdogModel.trim() ? watchdogModel.trim() : null;
+    this.orchestratorModelOverride =
+      typeof orchestratorModel === 'string' && orchestratorModel.trim()
+        ? orchestratorModel.trim()
+        : typeof watchdogModel === 'string' && watchdogModel.trim()
+          ? watchdogModel.trim()
+          : null;
+    this.watchdogModelOverride = this.orchestratorModelOverride;
     this.effortOverride = typeof effort === 'string' && effort.trim() ? effort.trim() : null;
     this.plannerEffortOverride =
       typeof plannerEffort === 'string' && plannerEffort.trim() ? plannerEffort.trim() : null;
@@ -6114,8 +6220,13 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
       typeof taskEffort === 'string' && taskEffort.trim() ? taskEffort.trim() : null;
     this.judgeEffortOverride =
       typeof judgeEffort === 'string' && judgeEffort.trim() ? judgeEffort.trim() : null;
-    this.watchdogEffortOverride =
-      typeof watchdogEffort === 'string' && watchdogEffort.trim() ? watchdogEffort.trim() : null;
+    this.orchestratorEffortOverride =
+      typeof orchestratorEffort === 'string' && orchestratorEffort.trim()
+        ? orchestratorEffort.trim()
+        : typeof watchdogEffort === 'string' && watchdogEffort.trim()
+          ? watchdogEffort.trim()
+          : null;
+    this.watchdogEffortOverride = this.orchestratorEffortOverride;
 
     if (sandbox !== undefined && sandbox !== null) {
       const normalized = normalizeSandboxMode(String(sandbox));
@@ -7177,6 +7288,8 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
         applied: false,
         reason: integrationEmpty ? 'No integration changes; skipping fast-forward.' : null,
         integrationBranch,
+        failed: false,
+        requiresBaseApply: !integrationEmpty,
       };
       if (!integrationEmpty) {
         this.sendProgress({ progress: 0.94, message: 'Fast-forwarding base branch' });
@@ -7273,7 +7386,11 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
         else if (status === 'blocked') statusCounts.blocked += 1;
       }
       const mergeSkipped = Array.isArray(mergeReport?.skipped) ? mergeReport.skipped.length : 0;
-      const integrationFailure = integrationEmptyFatal;
+      const fastForwardFailure =
+        !integrationEmpty
+        && ff?.applied !== true
+        && ff?.requiresBaseApply !== false;
+      const integrationFailure = integrationEmptyFatal || fastForwardFailure;
       const runStatus = integrationFailure
         ? 'failed'
         : statusCounts.failed > 0 || mergeSkipped > 0
@@ -7282,7 +7399,8 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
             ? 'blocked'
             : 'completed';
       const errorParts = [];
-      if (integrationFailure) errorParts.push('integration_empty');
+      if (integrationEmptyFatal) errorParts.push('integration_empty');
+      if (fastForwardFailure) errorParts.push(`fast_forward_not_applied=${clipText(ff?.reason ?? 'unknown', 500)}`);
       if (statusCounts.failed > 0 || statusCounts.blocked > 0 || mergeSkipped > 0) {
         errorParts.push(`tasks failed=${statusCounts.failed} blocked=${statusCounts.blocked} mergeSkipped=${mergeSkipped}`);
       }
@@ -7301,6 +7419,8 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
         integrationHasDiff: integrationStatus?.hasDiff ?? null,
         integrationTrackedCount: integrationStatus?.trackedCount ?? null,
         integrationFailure,
+        fastForwardApplied: ff?.applied === true,
+        fastForwardFailure,
       });
 
       return {
@@ -7715,28 +7835,29 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
 
   #desiredModel(role = 'task') {
     const normalizedRole = typeof role === 'string' ? role.trim().toLowerCase() : '';
+    const orchestratorRole = isOrchestratorRole(normalizedRole);
     const roleOverride =
       normalizedRole === 'planner'
         ? this.plannerModelOverride
         : normalizedRole === 'task'
           ? this.taskModelOverride
-          : normalizedRole === 'watchdog'
-            ? this.watchdogModelOverride
+          : orchestratorRole
+            ? this.orchestratorModelOverride ?? this.watchdogModelOverride
             : null;
     const roleEnv = normalizedRole === 'planner'
       ? pickFirstString(process.env.CDX_PLANNER_MODEL)
       : normalizedRole === 'task'
         ? pickFirstString(process.env.CDX_TASK_MODEL)
-        : normalizedRole === 'watchdog'
-          ? pickFirstString(process.env.CDX_WATCHDOG_MODEL)
+        : orchestratorRole
+          ? pickFirstString(process.env.CDX_ORCHESTRATOR_MODEL, process.env.CDX_WATCHDOG_MODEL)
           : null;
     const roleDefault =
       normalizedRole === 'planner'
         ? DEFAULT_PLANNER_MODEL
         : normalizedRole === 'task'
           ? DEFAULT_TASK_MODEL
-          : normalizedRole === 'watchdog'
-            ? DEFAULT_WATCHDOG_MODEL
+          : orchestratorRole
+            ? DEFAULT_ORCHESTRATOR_MODEL
             : null;
     return roleOverride
       ?? roleEnv
@@ -7776,6 +7897,7 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
     const supported = supportedReasoningEffortsForModel(model);
 
     const normalizedRole = typeof role === 'string' ? role.trim().toLowerCase() : '';
+    const orchestratorRole = isOrchestratorRole(normalizedRole);
     const explicitOverride = normalizeReasoningEffort(effortOverride);
 
     if (explicitOverride) {
@@ -7788,8 +7910,8 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
         ? this.plannerEffortOverride
         : normalizedRole === 'judge'
           ? this.judgeEffortOverride
-          : normalizedRole === 'watchdog'
-            ? this.watchdogEffortOverride
+          : orchestratorRole
+            ? this.orchestratorEffortOverride ?? this.watchdogEffortOverride
             : this.taskEffortOverride;
 
     const roleEnv = normalizedRole === 'planner'
@@ -7804,8 +7926,11 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
           process.env.CDX_JUDGE_MODEL_REASONING_EFFORT,
           process.env.CDX_JUDGE_REASONING_EFFORT,
         )
-        : normalizedRole === 'watchdog'
+        : orchestratorRole
           ? pickFirstString(
+            process.env.CDX_ORCHESTRATOR_EFFORT,
+            process.env.CDX_ORCHESTRATOR_MODEL_REASONING_EFFORT,
+            process.env.CDX_ORCHESTRATOR_REASONING_EFFORT,
             process.env.CDX_WATCHDOG_EFFORT,
             process.env.CDX_WATCHDOG_MODEL_REASONING_EFFORT,
             process.env.CDX_WATCHDOG_REASONING_EFFORT,
@@ -7819,13 +7944,13 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
     const explicitEnv = process.env.CDX_MODEL_REASONING_EFFORT;
 
     const roleDefault = (() => {
-      if (normalizedRole === 'watchdog') {
+      if (orchestratorRole) {
         if (supported instanceof Set) {
           if (supported.has('medium')) return 'medium';
           if (supported.has('low')) return 'low';
           if (supported.has('high')) return 'high';
         }
-        return DEFAULT_WATCHDOG_EFFORT;
+        return DEFAULT_ORCHESTRATOR_EFFORT;
       }
       if (normalizedRole === 'planner') return DEFAULT_PLANNER_EFFORT;
       if (normalizedRole === 'task') return DEFAULT_TASK_EFFORT;
@@ -7852,10 +7977,10 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
     return mapped ?? normalizedRequested;
   }
 
-  #watchdogEffortForWave(wave = 1) {
-    const model = this.#desiredModel('watchdog');
+  #orchestratorEffortForWave(wave = 1) {
+    const model = this.#desiredModel('orchestrator');
     const supported = supportedReasoningEffortsForModel(model);
-    const requested = this.#desiredEffort('watchdog') ?? DEFAULT_WATCHDOG_EFFORT;
+    const requested = this.#desiredEffort('orchestrator') ?? DEFAULT_ORCHESTRATOR_EFFORT;
     const normalizedRequested = normalizeReasoningEffort(requested);
     if (!normalizedRequested) return null;
 
@@ -7878,10 +8003,14 @@ ${COORDINATOR_RESPONSE_SCHEMA}`;
     return ramp[Math.min(safeWave - 1, ramp.length - 1)];
   }
 
+  #watchdogEffortForWave(wave = 1) {
+    return this.#orchestratorEffortForWave(wave);
+  }
+
   #effortRoleFromPhase(phase) {
     const label = typeof phase === 'string' ? phase.trim().toLowerCase() : '';
     if (!label) return 'task';
-    if (label.includes('watchdog')) return 'watchdog';
+    if (label.includes('orchestrator') || label.includes('watchdog')) return 'orchestrator';
     if (label.includes('plan')) return 'planner';
     if (label.includes('review')) return 'judge';
     return 'task';
@@ -10404,15 +10533,15 @@ Return ONLY JSON.`,
     reason,
     drainRuntimeInjections,
   }) {
-    const watchdogEffort = this.#watchdogEffortForWave(wave);
-    const watchdogSpec = this.#agentModelEffort({
-      phase: 'watchdog',
-      effortOverride: watchdogEffort,
+    const orchestratorEffort = this.#orchestratorEffortForWave(wave);
+    const orchestratorSpec = this.#agentModelEffort({
+      phase: 'orchestrator',
+      effortOverride: orchestratorEffort,
     });
     const reasonLabel = reason?.label ?? 'unspecified';
-    const previousWatchdogEffort = wave > 1 ? this.#watchdogEffortForWave(wave - 1) : null;
-    if (wave > 1 && watchdogSpec.effort && watchdogSpec.effort !== previousWatchdogEffort) {
-      this.sendLog(`[watchdog] escalating effort to ${watchdogSpec.effort} (wave ${wave}).`);
+    const previousOrchestratorEffort = wave > 1 ? this.#orchestratorEffortForWave(wave - 1) : null;
+    if (wave > 1 && orchestratorSpec.effort && orchestratorSpec.effort !== previousOrchestratorEffort) {
+      this.sendLog(`[orchestrator] escalating effort to ${orchestratorSpec.effort} (wave ${wave}).`);
     }
 
     const summarizeActionOutcome = (outcome, injectionOutcome = null) => {
@@ -10444,13 +10573,13 @@ Return ONLY JSON.`,
       };
     };
 
-    const watchdogEvent = buildWatchdogCoordinatorEvent({
+    const orchestratorEvent = buildWatchdogCoordinatorEvent({
       report: null,
       steer: null,
       wave,
       reason: reasonLabel,
     });
-    const watchdogArtifact = buildWatchdogCoordinatorArtifact({
+    const orchestratorArtifact = buildWatchdogCoordinatorArtifact({
       report: null,
       wave,
       reason: reasonLabel,
@@ -10458,23 +10587,23 @@ Return ONLY JSON.`,
 
     try {
       const coordination = await this.#coordinateEvent({
-        eventType: 'watchdog',
-        summary: watchdogEvent.summary,
+        eventType: 'orchestrator',
+        summary: orchestratorEvent.summary,
         eventDetails: {
-          ...(watchdogEvent.details ?? {}),
+          ...(orchestratorEvent.details ?? {}),
           runId: runId ?? null,
           repoRoot: clipText(repoRoot ?? this.activeRepoRoot ?? process.cwd(), 220) || null,
           goal: clipText(goal ?? '', 220) || null,
         },
         eventContextText: snapshotText,
-        artifactHint: watchdogArtifact,
+        artifactHint: orchestratorArtifact,
         steerHint: { broadcast: [], tasks: [] },
         emitEvent,
-        phase: 'watchdog',
+        phase: 'orchestrator',
         wave,
-        source: 'watchdog',
-        modelOverride: watchdogSpec.model ?? null,
-        effortOverride: watchdogSpec.effort ?? watchdogEffort,
+        source: 'orchestrator',
+        modelOverride: orchestratorSpec.model ?? null,
+        effortOverride: orchestratorSpec.effort ?? orchestratorEffort,
       });
       const injectionId = coerceString(coordination?.actionOutcome?.inject?.injectionId);
       const injectionOutcome = injectionId
@@ -10485,10 +10614,10 @@ Return ONLY JSON.`,
         : null;
       if (injectionOutcome) {
         await this.#reportCoordinatorInjectionOutcome({
-          eventType: 'watchdog-result',
-          phase: 'watchdog',
+          eventType: 'orchestrator-result',
+          phase: 'orchestrator',
           wave,
-          label: `Watchdog wave ${wave}`,
+          label: `Orchestrator wave ${wave}`,
           outcome: injectionOutcome,
           emitEvent,
           eventContextText: `Trigger: ${reasonLabel}`,
@@ -10513,17 +10642,16 @@ Return ONLY JSON.`,
       const reportText =
         coerceString(coordination?.eventSummary)
         ?? formatCanonicalCoordinatorEventSummary({
-          eventType: 'watchdog',
-          phase: 'watchdog',
+          eventType: 'orchestrator',
+          phase: 'orchestrator',
           wave,
           artifactChanged: coordination?.artifactChanged ?? null,
           steer,
           note: actionLabels.join(', ') || reasonLabel,
         });
 
-      this.sendLog(`[watchdog] coordinator wave ${wave}: ${reportText}`);
-      emitEvent?.({
-        type: 'watchdog.report',
+      this.sendLog(`[orchestrator] wave ${wave}: ${reportText}`);
+      const reportPayload = {
         wave,
         runId: runId ?? null,
         reason: reasonLabel,
@@ -10536,6 +10664,15 @@ Return ONLY JSON.`,
         respawnCount: actionSummary.respawnCount,
         steerBroadcastCount,
         steerTaskCount,
+      };
+      emitEvent?.({
+        type: 'orchestrator.report',
+        ...reportPayload,
+      });
+      emitEvent?.({
+        type: 'watchdog.report',
+        legacyAlias: true,
+        ...reportPayload,
       });
       return {
         ...coordination,
@@ -10546,13 +10683,21 @@ Return ONLY JSON.`,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err ?? 'unknown error');
-      this.sendLog(`[watchdog] failed (wave ${wave}): ${message}`);
-      emitEvent?.({
-        type: 'watchdog.failed',
+      this.sendLog(`[orchestrator] failed (wave ${wave}): ${message}`);
+      const failurePayload = {
         wave,
         runId: runId ?? null,
         reason: reasonLabel,
         error: message,
+      };
+      emitEvent?.({
+        type: 'orchestrator.failed',
+        ...failurePayload,
+      });
+      emitEvent?.({
+        type: 'watchdog.failed',
+        legacyAlias: true,
+        ...failurePayload,
       });
       return {
         reportText: null,
@@ -11672,10 +11817,10 @@ Blocked tasks (need recovery coverage):
       if (state.idleWarnedAt) return false;
       state.idleWarnedAt = Date.now();
       const message =
-        `Watchdog: no activity for ${formatIdle(idleMs)}. `
+        `Orchestrator: no activity for ${formatIdle(idleMs)}. `
         + 'If work remains, continue it immediately. '
         + 'If blocked or waiting on a decision, call router.ask with options.';
-      this.enqueueAgentMessage({ taskId, message, source: 'watchdog' });
+      this.enqueueAgentMessage({ taskId, message, source: 'orchestrator' });
       emitEvent?.({
         type: 'task.idle.warn',
         taskId,
@@ -11683,7 +11828,7 @@ Blocked tasks (need recovery coverage):
         lastActivityAt: state.lastActivityAt ?? null,
         lastActivity: state.lastActivity ?? null,
       });
-      this.sendLog(`[watchdog] idle warn for ${taskId} (${formatIdle(idleMs)} idle).`);
+      this.sendLog(`[orchestrator] idle warn for ${taskId} (${formatIdle(idleMs)} idle).`);
       return true;
     };
 
@@ -11695,10 +11840,10 @@ Blocked tasks (need recovery coverage):
         type: 'task.abort.requested',
         taskId,
         reason,
-        source: 'watchdog',
+        source: 'orchestrator',
         ...meta,
       });
-      this.sendLog(`[watchdog] aborting ${taskId}: ${reason}`);
+      this.sendLog(`[orchestrator] aborting ${taskId}: ${reason}`);
       return true;
     };
 
@@ -11890,7 +12035,7 @@ Blocked tasks (need recovery coverage):
         attempt: state.respawnAttempts,
         ...eventMeta,
       });
-      this.sendLog(`[${eventMeta.source ?? 'watchdog'}] respawn requested for ${taskId}: ${reason}`);
+      this.sendLog(`[${eventMeta.source ?? 'orchestrator'}] respawn requested for ${taskId}: ${reason}`);
       return true;
     };
 
@@ -11933,7 +12078,7 @@ Blocked tasks (need recovery coverage):
       state.retryAttempts += 1;
       state.lastRetryAt = now;
       state.bumpEffortOverride();
-      state.resetForRetry({ reason: reasonText, source: meta.source ?? 'watchdog' });
+      state.resetForRetry({ reason: reasonText, source: meta.source ?? 'orchestrator' });
       resolved.delete(taskId);
 
       emitEvent?.({
@@ -11944,7 +12089,7 @@ Blocked tasks (need recovery coverage):
         effort: state.effortOverride ?? null,
         ...meta,
       });
-      this.sendLog(`[${meta.source ?? 'watchdog'}] retrying ${taskId}: ${reasonText}`);
+      this.sendLog(`[${meta.source ?? 'orchestrator'}] retrying ${taskId}: ${reasonText}`);
       sendSchedulerProgress(`Retrying task ${taskId}: ${reasonText}`);
 
       const depSet = remainingDeps.get(taskId);
@@ -12312,8 +12457,7 @@ Blocked tasks (need recovery coverage):
       pendingStates = [...taskStates.values()].filter(state => state.status === 'pending');
 
       if (pendingStates.length === 0) {
-        emitEvent?.({
-          type: 'watchdog.diagnosis',
+        const diagnosisPayload = {
           reason: reasonLabel ?? null,
           pending: 0,
           runnable: 0,
@@ -12323,7 +12467,9 @@ Blocked tasks (need recovery coverage):
           waitingOnRunningIdle: 0,
           waitingOnRunningMerge: 0,
           waitingOnUnknown: 0,
-        });
+        };
+        emitEvent?.({ type: 'orchestrator.diagnosis', ...diagnosisPayload });
+        emitEvent?.({ type: 'watchdog.diagnosis', legacyAlias: true, ...diagnosisPayload });
         return { recovered: actions.length > 0, actions, pending: 0 };
       }
 
@@ -12339,7 +12485,7 @@ Blocked tasks (need recovery coverage):
             if (!depState || depState.status !== 'failed') continue;
             if (failedDeps.has(depId)) continue;
             if (shouldRetryFailedTask(depState, depState.error ?? null)) {
-              if (queueTaskRetry(depId, depState, `retry after failure (blocked ${taskId})`, { source: 'watchdog' })) {
+              if (queueTaskRetry(depId, depState, `retry after failure (blocked ${taskId})`, { source: 'orchestrator' })) {
                 retried += 1;
                 failedDeps.add(depId);
               }
@@ -12374,8 +12520,7 @@ Blocked tasks (need recovery coverage):
 
       const pendingAfter = [...taskStates.values()].filter(state => state.status === 'pending');
       const finalDiagnostics = diagnosePendingStates(pendingAfter, runningMeta);
-      emitEvent?.({
-        type: 'watchdog.diagnosis',
+      const diagnosisPayload = {
         reason: reasonLabel ?? null,
         pending: pendingAfter.length,
         runnable: finalDiagnostics.runnable.length,
@@ -12385,7 +12530,9 @@ Blocked tasks (need recovery coverage):
         waitingOnRunningIdle: finalDiagnostics.waitingOnRunningIdle.length,
         waitingOnRunningMerge: finalDiagnostics.waitingOnRunningMerge.length,
         waitingOnUnknown: finalDiagnostics.waitingOnUnknown.length,
-      });
+      };
+      emitEvent?.({ type: 'orchestrator.diagnosis', ...diagnosisPayload });
+      emitEvent?.({ type: 'watchdog.diagnosis', legacyAlias: true, ...diagnosisPayload });
 
       let stallRecovered = false;
       if (shouldReplanForDiagnostics(finalDiagnostics, pendingAfter)) {
@@ -12414,13 +12561,13 @@ Blocked tasks (need recovery coverage):
           }
           if (outcome.recovered || outcome.failed > 0) {
             this.sendLog(
-              `[watchdog] merge ask recovery: eligible=${outcome.eligible} groups=${outcome.takeoverGroups} takeoverRecovered=${outcome.takeoverRecovered} autoAnswered=${outcome.autoAnswered}${outcome.failed > 0 ? ` failed=${outcome.failed}` : ''}.`,
+              `[orchestrator] merge ask recovery: eligible=${outcome.eligible} groups=${outcome.takeoverGroups} takeoverRecovered=${outcome.takeoverRecovered} autoAnswered=${outcome.autoAnswered}${outcome.failed > 0 ? ` failed=${outcome.failed}` : ''}.`,
             );
           }
         })
         .catch(async err => {
           const message = err instanceof Error ? err.message : String(err ?? 'merge ask recovery failed');
-          this.sendLog(`[watchdog] merge ask recovery failed: ${message}`);
+          this.sendLog(`[orchestrator] merge ask recovery failed: ${message}`);
         })
         .finally(() => {
           watchdogMergeAskRecovery = null;
@@ -12560,7 +12707,7 @@ Blocked tasks (need recovery coverage):
       })
         .catch(async err => {
           const message = err instanceof Error ? err.message : String(err ?? 'unknown error');
-          this.sendLog(`[watchdog] failed to run (wave ${wave}): ${message}`);
+          this.sendLog(`[orchestrator] failed to run (wave ${wave}): ${message}`);
           return {
             reportText: null,
             actions: null,
@@ -12705,7 +12852,7 @@ Blocked tasks (need recovery coverage):
               attempt: state.respawnAttempts,
               checklist: task.checklist ?? null,
             });
-            this.sendLog(`[watchdog] respawned ${taskId}: ${reason}`);
+            this.sendLog(`[orchestrator] respawned ${taskId}: ${reason}`);
             sendSchedulerProgress(`Respawned task ${taskId}: ${reason}`);
             return;
           }
@@ -13688,23 +13835,24 @@ Blocked tasks (need recovery coverage):
       );
       const recovered = outcome.recovered;
       const actions = outcome.actionLabels;
-      emitEvent?.({
-        type: 'watchdog.intervention',
+      const eventPayload = {
         action: recovered ? 'coordinator-recover' : 'coordinator-noop',
         running: running.size,
         ready: ready.length,
         pending: signals.pendingStates.length,
         reason: 'low-agents',
         actions,
-      });
+      };
+      emitEvent?.({ type: 'orchestrator.intervention', ...eventPayload });
+      emitEvent?.({ type: 'watchdog.intervention', legacyAlias: true, ...eventPayload });
       const actionLabel = actions.length > 0 ? ` actions=${actions.join(',')}` : '';
       if (recovered) {
         this.sendLog(
-          `[watchdog] coordinator intervention (low-agents): recovered stalled plan (pending=${signals.pendingStates.length}).${actionLabel}`,
+          `[orchestrator] intervention (low-agents): recovered stalled plan (pending=${signals.pendingStates.length}).${actionLabel}`,
         );
       } else {
         this.sendLog(
-          `[watchdog] coordinator intervention (low-agents): no recovery action available (pending=${signals.pendingStates.length}).${actionLabel}${outcome.reportText ? ` report=${outcome.reportText}` : ''}`,
+          `[orchestrator] intervention (low-agents): no recovery action available (pending=${signals.pendingStates.length}).${actionLabel}${outcome.reportText ? ` report=${outcome.reportText}` : ''}`,
         );
       }
     };
@@ -13722,38 +13870,40 @@ Blocked tasks (need recovery coverage):
       if (ready.length > 0 && !signals.actionableRunning) return;
 
       lastNoProgressInterventionAt = now;
-      emitEvent?.({
-        type: 'watchdog.no_progress',
+      const noProgressPayload = {
         elapsedMs: now - lastProgressAt,
         running: running.size,
         pending: pendingStates.length,
         ready: ready.length,
         runningAttention: signals.runningAttentionTaskIds,
-      });
+      };
+      emitEvent?.({ type: 'orchestrator.no_progress', ...noProgressPayload });
+      emitEvent?.({ type: 'watchdog.no_progress', legacyAlias: true, ...noProgressPayload });
 
       const outcome = summarizeWatchdogOutcome(
         await maybeTriggerWatchdog({ force: true, reason: 'no-progress' }),
       );
       const recovered = outcome.recovered;
       const actions = outcome.actionLabels;
-      emitEvent?.({
-        type: 'watchdog.intervention',
+      const eventPayload = {
         action: recovered ? 'coordinator-no-progress-recover' : 'coordinator-no-progress-noop',
         running: running.size,
         ready: ready.length,
         pending: pendingStates.length,
         reason: 'no-progress',
         actions,
-      });
+      };
+      emitEvent?.({ type: 'orchestrator.intervention', ...eventPayload });
+      emitEvent?.({ type: 'watchdog.intervention', legacyAlias: true, ...eventPayload });
       if (recovered) {
         lastProgressAt = Date.now();
         this.sendLog(
-          `[watchdog] coordinator no-progress recovery triggered (pending=${pendingStates.length}).${actions.length > 0 ? ` actions=${actions.join(',')}` : ''}`,
+          `[orchestrator] no-progress recovery triggered (pending=${pendingStates.length}).${actions.length > 0 ? ` actions=${actions.join(',')}` : ''}`,
         );
-        sendSchedulerProgress('Coordinator watchdog intervention after no-progress timeout');
+        sendSchedulerProgress('Orchestrator intervention after no-progress timeout');
       } else {
         this.sendLog(
-          `[watchdog] coordinator no-progress recovery found no action (pending=${pendingStates.length}).${actions.length > 0 ? ` actions=${actions.join(',')}` : ''}${outcome.reportText ? ` report=${outcome.reportText}` : ''}`,
+          `[orchestrator] no-progress recovery found no action (pending=${pendingStates.length}).${actions.length > 0 ? ` actions=${actions.join(',')}` : ''}${outcome.reportText ? ` report=${outcome.reportText}` : ''}`,
         );
       }
     };
@@ -13790,23 +13940,24 @@ Blocked tasks (need recovery coverage):
       );
       const recovered = outcome.recovered;
       const actions = outcome.actionLabels;
-      emitEvent?.({
-        type: 'watchdog.intervention',
+      const eventPayload = {
         action: recovered ? 'coordinator-periodic-recover' : 'coordinator-periodic-noop',
         running: running.size,
         ready: ready.length,
         pending: pendingStates.length,
         reason: reasonLabel,
         actions,
-      });
+      };
+      emitEvent?.({ type: 'orchestrator.intervention', ...eventPayload });
+      emitEvent?.({ type: 'watchdog.intervention', legacyAlias: true, ...eventPayload });
       const actionLabel = actions.length > 0 ? ` actions=${actions.join(',')}` : '';
       if (recovered) {
         this.sendLog(
-          `[watchdog] coordinator periodic intervention (${reasonLabel}): recovered stalled tasks (pending=${pendingStates.length}).${actionLabel}`,
+          `[orchestrator] periodic intervention (${reasonLabel}): recovered stalled tasks (pending=${pendingStates.length}).${actionLabel}`,
         );
       } else {
         this.sendLog(
-          `[watchdog] coordinator periodic intervention (${reasonLabel}): no recovery action (pending=${pendingStates.length}).${actionLabel}${outcome.reportText ? ` report=${outcome.reportText}` : ''}`,
+          `[orchestrator] periodic intervention (${reasonLabel}): no recovery action (pending=${pendingStates.length}).${actionLabel}${outcome.reportText ? ` report=${outcome.reportText}` : ''}`,
         );
       }
     };
@@ -14270,7 +14421,7 @@ Blocked tasks (need recovery coverage):
                   attempt: state.respawnAttempts,
                   timeoutMs: TURN_TIMEOUT_MS,
                 });
-                this.sendLog(`[watchdog] respawn requested for ${task.id}: ${reason}`);
+                this.sendLog(`[orchestrator] respawn requested for ${task.id}: ${reason}`);
               }
             }
             throw err;
@@ -14385,7 +14536,7 @@ Blocked tasks (need recovery coverage):
             source: 'task-followup',
             followupTurns: followupTurnsUsed,
           });
-          this.sendLog(`[watchdog] respawn requested for ${task.id}: ${reason}`);
+          this.sendLog(`[orchestrator] respawn requested for ${task.id}: ${reason}`);
         }
         throw new Error(reason);
       }
@@ -15249,7 +15400,7 @@ Blocked tasks (need recovery coverage):
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err ?? 'salvage failed');
         errors.push({ id: summary.id, error: message });
-        this.sendLog(`[watchdog] salvage failed for ${summary.id}: ${message}`);
+        this.sendLog(`[orchestrator] salvage failed for ${summary.id}: ${message}`);
       }
 
       taskReports.push({
@@ -15377,7 +15528,7 @@ Blocked tasks (need recovery coverage):
   #answerDependencyMergeAsk({
     askId,
     taskId,
-    answeredBy = 'watchdog',
+    answeredBy = 'orchestrator',
     optionId = 'resolve',
     rationale,
     messageForAgent,
@@ -15389,11 +15540,11 @@ Blocked tasks (need recovery coverage):
     const resolvedRationale =
       typeof rationale === 'string' && rationale.trim()
         ? rationale.trim()
-        : 'Watchdog recovered the dependency merge and is resuming the task.';
+        : 'Orchestrator recovered the dependency merge and is resuming the task.';
     const resolvedMessage =
       typeof messageForAgent === 'string' && messageForAgent.trim()
         ? messageForAgent.trim()
-        : 'Watchdog recovered the dependency merge. Continue the task.';
+        : 'Orchestrator recovered the dependency merge. Continue the task.';
     const outcome = this.answerRouterAsk({
       askId: resolvedAskId,
       response: {
@@ -15410,7 +15561,7 @@ Blocked tasks (need recovery coverage):
     });
     if (outcome?.ok) {
       this.sendLog(
-        `[watchdog] auto-answered supervisor ask ${resolvedAskId} for ${taskId ?? 'unknown'} (${resolvedOptionId}).`,
+        `[orchestrator] auto-answered supervisor ask ${resolvedAskId} for ${taskId ?? 'unknown'} (${resolvedOptionId}).`,
       );
     }
     return outcome;
@@ -15446,7 +15597,7 @@ Blocked tasks (need recovery coverage):
         const outcome = this.#answerDependencyMergeAsk({
           askId,
           taskId,
-          rationale: 'Watchdog confirmed that no merge conflict remains in the worktree.',
+          rationale: 'Orchestrator confirmed that no merge conflict remains in the worktree.',
           messageForAgent: 'No merge conflict remains. Continue the task.',
         });
         return {
@@ -15457,23 +15608,24 @@ Blocked tasks (need recovery coverage):
       }
 
       this.sendLog(
-        `[watchdog] merge recovery actions for ${taskId ?? askId}: dependency=${dependencyId ?? 'unknown'} branch=${dependencyBranch}`,
+        `[orchestrator] merge recovery actions for ${taskId ?? askId}: dependency=${dependencyId ?? 'unknown'} branch=${dependencyBranch}`,
       );
-      emitEvent?.({
-        type: 'watchdog.merge_takeover.started',
+      const startedPayload = {
         askId,
         taskId,
         dependencyId,
         dependencyBranch,
         worktreePath,
-      });
+      };
+      emitEvent?.({ type: 'orchestrator.merge_takeover.started', ...startedPayload });
+      emitEvent?.({ type: 'watchdog.merge_takeover.started', legacyAlias: true, ...startedPayload });
 
       const mergeTimeoutMs = WATCHDOG_MERGE_TIMEOUT_MS > 0
         ? WATCHDOG_MERGE_TIMEOUT_MS
         : MERGE_RESOLVE_TIMEOUT_MS > 0
           ? MERGE_RESOLVE_TIMEOUT_MS
           : null;
-      const contextLabel = `watchdog recovery for task ${taskId ?? 'unknown'}`;
+      const contextLabel = `orchestrator recovery for task ${taskId ?? 'unknown'}`;
       const mergeHead = await this.#readMergeHead({ cwd: worktreePath });
       if (mergeHead) {
         await this.#resolveDependencyMergeConflict({
@@ -15484,7 +15636,7 @@ Blocked tasks (need recovery coverage):
           contextLabel,
           emitEvent,
           timeoutMs: mergeTimeoutMs,
-          resolved: 'watchdog_conflict_resolved',
+          resolved: 'orchestrator_conflict_resolved',
         });
       } else {
         await abortMerge({ cwd: worktreePath }).catch(() => {});
@@ -15495,7 +15647,7 @@ Blocked tasks (need recovery coverage):
             dependencyId,
             dependencyBranch,
             emitEvent,
-            resolved: 'watchdog_retry',
+            resolved: 'orchestrator_retry',
           });
         } catch (err) {
           const isConflict = await detectMergeConflict({
@@ -15517,7 +15669,7 @@ Blocked tasks (need recovery coverage):
             contextLabel,
             emitEvent,
             timeoutMs: mergeTimeoutMs,
-            resolved: 'watchdog_retry_conflict_resolved',
+            resolved: 'orchestrator_retry_conflict_resolved',
           });
         }
       }
@@ -15525,30 +15677,32 @@ Blocked tasks (need recovery coverage):
       const outcome = this.#answerDependencyMergeAsk({
         askId,
         taskId,
-        rationale: 'Watchdog recovered the dependency merge directly and is resuming the task.',
+        rationale: 'Orchestrator recovered the dependency merge directly and is resuming the task.',
       });
       if (!outcome?.ok && outcome?.error !== 'ask_not_pending') {
         throw new Error(`failed to answer router.ask ${askId}: ${outcome?.error ?? 'unknown_error'}`);
       }
-      emitEvent?.({
-        type: 'watchdog.merge_takeover.completed',
+      const completedPayload = {
         askId,
         taskId,
         dependencyId,
         dependencyBranch,
-      });
+      };
+      emitEvent?.({ type: 'orchestrator.merge_takeover.completed', ...completedPayload });
+      emitEvent?.({ type: 'watchdog.merge_takeover.completed', legacyAlias: true, ...completedPayload });
       return { ok: true, action: 'takeover-resolved' };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err ?? 'merge recovery failed');
-      this.sendLog(`[watchdog] merge recovery failed for ${taskId ?? askId}: ${message}`);
-      emitEvent?.({
-        type: 'watchdog.merge_takeover.failed',
+      this.sendLog(`[orchestrator] merge recovery failed for ${taskId ?? askId}: ${message}`);
+      const failedPayload = {
         askId,
         taskId,
         dependencyId,
         dependencyBranch,
         error: message,
-      });
+      };
+      emitEvent?.({ type: 'orchestrator.merge_takeover.failed', ...failedPayload });
+      emitEvent?.({ type: 'watchdog.merge_takeover.failed', legacyAlias: true, ...failedPayload });
       return { ok: false, error: message };
     }
   }
@@ -15579,14 +15733,15 @@ Blocked tasks (need recovery coverage):
 
     for (const group of recoveryPlan.takeoverGroups) {
       this.sendLog(
-        `[watchdog] merge takeover queued: asks=${group.askIds.join(', ')} tasks=${group.taskIds.join(', ') || '-'} conflicts=${group.conflictPaths.join(', ') || '-'}.`,
+        `[orchestrator] merge takeover queued: asks=${group.askIds.join(', ')} tasks=${group.taskIds.join(', ') || '-'} conflicts=${group.conflictPaths.join(', ') || '-'}.`,
       );
-      emitEvent?.({
-        type: 'watchdog.merge_takeover.queued',
+      const queuedPayload = {
         askIds: group.askIds,
         taskIds: group.taskIds,
         conflictPaths: group.conflictPaths,
-      });
+      };
+      emitEvent?.({ type: 'orchestrator.merge_takeover.queued', ...queuedPayload });
+      emitEvent?.({ type: 'watchdog.merge_takeover.queued', legacyAlias: true, ...queuedPayload });
       for (const askId of group.askIds) {
         const ask = eligibleByAskId.get(askId);
         if (!ask) continue;
@@ -15609,7 +15764,7 @@ Blocked tasks (need recovery coverage):
       const outcome = this.#answerDependencyMergeAsk({
         askId: ask.askId,
         taskId: ask.taskId ?? null,
-        rationale: 'Watchdog confirmed that the dependency merge already finished cleanly.',
+        rationale: 'Orchestrator confirmed that the dependency merge already finished cleanly.',
         messageForAgent: 'The dependency merge is already complete. Continue the task.',
       });
       if (outcome?.ok || outcome?.error === 'ask_not_pending') {
@@ -16410,6 +16565,8 @@ Finish with a short report of what you ran and what you fixed.`,
         reason: 'Shared workspace mode: changes are already on the base branch.',
         integrationBranch: null,
         head,
+        failed: false,
+        requiresBaseApply: false,
       };
     }
     if (headRef === 'HEAD') {
@@ -16417,18 +16574,25 @@ Finish with a short report of what you ran and what you fixed.`,
         applied: false,
         reason: 'Detached HEAD; skipping fast-forward.',
         integrationBranch,
+        failed: true,
+        requiresBaseApply: true,
       };
     }
 
     const applyPartial = (process.env.CDX_APPLY_PARTIAL ?? '0') === '1';
     const hasIncomplete =
-      (Array.isArray(tasks) && tasks.some(task => (task?.status ?? 'unknown') !== 'completed'))
+      (Array.isArray(tasks) && tasks.some(task => {
+        const status = normalizeTaskStatus(task?.status ?? 'unknown');
+        return status !== 'completed' && status !== 'superseded';
+      }))
       || (Number(mergeSkipped) || 0) > 0;
     if (hasIncomplete && !applyPartial) {
       return {
         applied: false,
         reason: 'Tasks did not fully complete; skipping fast-forward.',
         integrationBranch,
+        failed: true,
+        requiresBaseApply: true,
       };
     }
     try {
@@ -16443,10 +16607,12 @@ Finish with a short report of what you ran and what you fixed.`,
         applied: false,
         reason: `Fast-forward failed: ${message}`,
         integrationBranch,
+        failed: true,
+        requiresBaseApply: true,
       };
     }
     const head = (await git(['rev-parse', 'HEAD'], { cwd: repoRoot })).trim();
-    return { applied: true, head, integrationBranch };
+    return { applied: true, head, integrationBranch, failed: false, requiresBaseApply: true };
   }
 
   async #cleanupWorktrees(repoRoot, runRoot, integrationPath, integrationBranch, taskStates) {
@@ -18864,7 +19030,7 @@ class CdxAppServerMcpServer {
 	      '- cdx: Alias of cdx.spawn for callers that expose a single top-level CDX tool.',
 	      '- cdx.resume: Restart a new run from an orphaned run\'s saved ledger/input. Defaults to background handoff and links the orphaned run to the new run.',
 	      '- background: Set false only when you explicitly want to block until completion (cdx.spawn defaults to background).',
-	      '- cdx.run: Advanced/manual orchestrator entrypoint. Requires either { prompt } for planner mode or { targets, checklist } for checklist mode. Optional checklist hints include { sourceSystems, artifactLocation, artifactFormat, artifactInstructions }. Other optional flags: { workflowMode, continuous, maxCycles, outputRoot, repoRoot, maxParallelism, minParallelism, autoscale, smartSpawn, skipPlanner, model, plannerModel, taskModel, watchdogModel, effort, plannerEffort, taskEffort, judgeEffort, watchdogEffort, sandbox, webSearch, analyticsEnabled, integrationVerify, review }',
+	      '- cdx.run: Advanced/manual orchestrator entrypoint. Requires either { prompt } for planner mode or { targets, checklist } for checklist mode. Optional checklist hints include { sourceSystems, artifactLocation, artifactFormat, artifactInstructions }. Other optional flags: { workflowMode, continuous, maxCycles, outputRoot, repoRoot, maxParallelism, minParallelism, autoscale, smartSpawn, skipPlanner, model, plannerModel, taskModel, orchestratorModel, watchdogModel, effort, plannerEffort, taskEffort, judgeEffort, orchestratorEffort, watchdogEffort, sandbox, webSearch, analyticsEnabled, integrationVerify, review }',
 	      '- cdx.status: Inspect run status, tasks, and recent events. Supports long-polling with { afterEventId, waitMs } and { waitFor: "event"|"ask" }.',
       '- cdx.ps: List currently running CDX runs and their dashboard URLs.',
       '',
@@ -21352,8 +21518,14 @@ class CdxAppServerMcpServer {
       ?? args?.task_model
       ?? args?.taskModelId
       ?? args?.task_model_id;
+    const orchestratorModel =
+      args?.orchestratorModel
+      ?? args?.orchestrator_model
+      ?? args?.orchestratorModelId
+      ?? args?.orchestrator_model_id;
     const watchdogModel =
-      args?.watchdogModel
+      orchestratorModel
+      ?? args?.watchdogModel
       ?? args?.watchdog_model
       ?? args?.watchdogModelId
       ?? args?.watchdog_model_id;
@@ -21384,8 +21556,16 @@ class CdxAppServerMcpServer {
       ?? args?.judge_reasoning_effort
       ?? args?.judgeModelReasoningEffort
       ?? args?.judge_model_reasoning_effort;
+    const orchestratorEffort =
+      args?.orchestratorEffort
+      ?? args?.orchestrator_effort
+      ?? args?.orchestratorReasoningEffort
+      ?? args?.orchestrator_reasoning_effort
+      ?? args?.orchestratorModelReasoningEffort
+      ?? args?.orchestrator_model_reasoning_effort;
     const watchdogEffort =
-      args?.watchdogEffort
+      orchestratorEffort
+      ?? args?.watchdogEffort
       ?? args?.watchdog_effort
       ?? args?.watchdogReasoningEffort
       ?? args?.watchdog_reasoning_effort
@@ -21511,11 +21691,13 @@ class CdxAppServerMcpServer {
       model,
       plannerModel,
       taskModel,
+      orchestratorModel,
       watchdogModel,
       effort,
       plannerEffort,
       taskEffort,
       judgeEffort,
+      orchestratorEffort,
       watchdogEffort,
       sandbox,
       webSearch,
@@ -21847,9 +22029,13 @@ class CdxAppServerMcpServer {
             type: 'string',
             description: 'Optional model override for task worker turns.',
           },
+          orchestratorModel: {
+            type: 'string',
+            description: 'Optional model override for orchestrator coordination and recovery turns.',
+          },
           watchdogModel: {
             type: 'string',
-            description: 'Optional model override for watchdog diagnosis turns.',
+            description: 'Legacy alias for orchestratorModel.',
           },
           effort: {
             type: 'string',
@@ -21869,10 +22055,15 @@ class CdxAppServerMcpServer {
             type: 'string',
             description: 'Optional reasoning effort override for judge sessions.',
           },
+          orchestratorEffort: {
+            type: 'string',
+            description:
+              'Optional base reasoning effort for orchestrator turns; escalates by wave until capped.',
+          },
           watchdogEffort: {
             type: 'string',
             description:
-              'Optional base reasoning effort for watchdog turns; escalates by wave until capped.',
+              'Legacy alias for orchestratorEffort.',
           },
           sandbox: {
             type: 'string',
@@ -22078,11 +22269,13 @@ class CdxAppServerMcpServer {
           model: { type: 'string' },
           plannerModel: { type: 'string' },
           taskModel: { type: 'string' },
+          orchestratorModel: { type: 'string' },
           watchdogModel: { type: 'string' },
           effort: { type: 'string' },
           plannerEffort: { type: 'string' },
           taskEffort: { type: 'string' },
           judgeEffort: { type: 'string' },
+          orchestratorEffort: { type: 'string' },
           watchdogEffort: { type: 'string' },
           sandbox: {
             type: 'string',

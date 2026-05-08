@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import process from 'node:process';
 
@@ -11,6 +13,7 @@ let turnCounter = 0;
 let plannerTurnCounter = 0;
 let taskTurnCounter = 0;
 const taskThreadIds = new Set();
+const threadCwds = new Map();
 
 function reply(id, result) {
   if (id === undefined || id === null) return;
@@ -138,6 +141,45 @@ function extractTaskId(text) {
   return match[1]?.trim() || null;
 }
 
+function safeRelativePath(value) {
+  const relativePath = String(value ?? '').trim();
+  if (!relativePath || path.isAbsolute(relativePath)) return null;
+  const normalized = path.normalize(relativePath);
+  if (normalized === '.' || normalized.startsWith('..') || path.isAbsolute(normalized)) return null;
+  return normalized;
+}
+
+async function writeFixtureFile(root, relativePath, text) {
+  const safePath = safeRelativePath(relativePath);
+  if (!root || !safePath) return;
+  const resolvedRoot = path.resolve(root);
+  const target = path.resolve(resolvedRoot, safePath);
+  if (target !== resolvedRoot && !target.startsWith(resolvedRoot + path.sep)) return;
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, text, 'utf8');
+}
+
+async function maybeWriteTaskFixtureFiles(threadId) {
+  const relativePath = process.env.APP_SERVER_STUB_WRITE_FILE;
+  if (relativePath) {
+    await writeFixtureFile(
+      threadCwds.get(threadId),
+      relativePath,
+      process.env.APP_SERVER_STUB_WRITE_TEXT ?? 'stub task change\n',
+    );
+  }
+
+  const baseRelativePath = process.env.APP_SERVER_STUB_BASE_WRITE_FILE;
+  const baseRoot = process.env.APP_SERVER_STUB_BASE_WRITE_ROOT;
+  if (baseRelativePath && baseRoot) {
+    await writeFixtureFile(
+      baseRoot,
+      baseRelativePath,
+      process.env.APP_SERVER_STUB_BASE_WRITE_TEXT ?? 'stub base change\n',
+    );
+  }
+}
+
 function isTaskPrompt(text) {
   if (!text) return false;
   return text.includes('Task assigned to you (')
@@ -179,6 +221,7 @@ reader.onMessage(async message => {
   if (method === 'thread/start') {
     threadCounter += 1;
     const threadId = `thread-${threadCounter}`;
+    if (params?.cwd) threadCwds.set(threadId, String(params.cwd));
     reply(id, { thread: { id: threadId } });
     return;
   }
@@ -220,6 +263,9 @@ reader.onMessage(async message => {
         text = taskTextSequence[index] || `Task complete (${threadId}/${turnId}).`;
       } else {
         text = overrideText || `Task complete (${threadId}/${turnId}).`;
+      }
+      if (taskPrompt) {
+        await maybeWriteTaskFixtureFiles(threadId);
       }
       await delay(delayMs);
     }

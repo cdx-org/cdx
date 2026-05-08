@@ -645,10 +645,12 @@ test('cdx server exposes helper tools and global option passthrough fields', asy
   assert.ok(props.model);
   assert.ok(props.plannerModel);
   assert.ok(props.taskModel);
+  assert.ok(props.orchestratorModel);
   assert.ok(props.watchdogModel);
   assert.ok(props.sandbox);
   assert.ok(props.webSearch);
   assert.ok(props.analyticsEnabled);
+  assert.ok(props.orchestratorEffort);
   assert.ok(props.watchdogEffort);
   assert.ok(props.review);
   assert.ok(props.repoRoot);
@@ -916,7 +918,7 @@ test('cdx app-server orchestrator streams events and runs agents in parallel', {
   assert.ok(startedBeforeCompleted.size >= 2);
 });
 
-test('watchdog reports no-progress for a single running task', { timeout: 30_000 }, async () => {
+test('orchestrator reports no-progress for a single running task', { timeout: 30_000 }, async () => {
   const serverPath = path.join(TEST_PROJECT_ROOT, 'src', 'cli', 'cdx-appserver-mcp-server.js');
   const stubPath = path.join(TEST_PROJECT_ROOT, 'tests', 'app', 'fixtures', 'stubs', 'appserver-stub.js');
   const watchdogRoot = await mkdtemp(path.join(os.tmpdir(), 'cdx-watchdog-running-test-'));
@@ -941,9 +943,9 @@ test('watchdog reports no-progress for a single running task', { timeout: 30_000
         CDX_STREAM_EVENTS: '0',
         CDX_STATS_AUTO_OPEN: '0',
         CDX_NO_PROGRESS_TIMEOUT_MS: '50',
-        CDX_WATCHDOG_INTERVAL_MS: '50',
-        CDX_WATCHDOG_INTERVENTION_COOLDOWN_MS: '0',
-        CDX_WATCHDOG_INTERVENTION_INTERVAL_MS: '50',
+        CDX_ORCHESTRATOR_INTERVAL_MS: '50',
+        CDX_ORCHESTRATOR_INTERVENTION_COOLDOWN_MS: '0',
+        CDX_ORCHESTRATOR_INTERVENTION_INTERVAL_MS: '50',
         CDX_DYNAMIC_REPLAN_CHECK_INTERVAL_MS: '25',
         CDX_TASK_IDLE_WARN_MS: '0',
         CDX_TASK_IDLE_TIMEOUT_MS: '0',
@@ -986,16 +988,108 @@ test('watchdog reports no-progress for a single running task', { timeout: 30_000
       .filter(msg => msg.method === 'cdx/event')
       .map(msg => msg.params ?? {});
     assert.ok(
-      events.some(evt => evt.type === 'watchdog.no_progress' && evt.running === 1),
-      `Expected watchdog.no_progress event, got ${events.map(evt => evt.type).join(', ')}`,
+      events.some(evt => evt.type === 'orchestrator.no_progress' && evt.running === 1),
+      `Expected orchestrator.no_progress event, got ${events.map(evt => evt.type).join(', ')}`,
     );
     assert.ok(
-      events.some(evt => evt.type === 'watchdog.report' || evt.type === 'watchdog.intervention'),
-      `Expected watchdog report/intervention event, got ${events.map(evt => evt.type).join(', ')}`,
+      events.some(evt => evt.type === 'orchestrator.report' || evt.type === 'orchestrator.intervention'),
+      `Expected orchestrator report/intervention event, got ${events.map(evt => evt.type).join(', ')}`,
+    );
+    assert.ok(
+      events.some(evt => evt.type === 'watchdog.no_progress' && evt.legacyAlias === true),
+      `Expected legacy watchdog.no_progress alias, got ${events.map(evt => evt.type).join(', ')}`,
     );
   } finally {
     await stopProcess(watchdogServer);
     await rm(watchdogRoot, { recursive: true, force: true });
+  }
+});
+
+test('cdx run fails when integration fast-forward cannot apply to base branch', { timeout: 30_000 }, async () => {
+  const serverPath = path.join(TEST_PROJECT_ROOT, 'src', 'cli', 'cdx-appserver-mcp-server.js');
+  const stubPath = path.join(TEST_PROJECT_ROOT, 'tests', 'app', 'fixtures', 'stubs', 'appserver-stub.js');
+  const ffRoot = await mkdtemp(path.join(os.tmpdir(), 'cdx-fast-forward-failure-test-'));
+  const ffRepoRoot = path.join(ffRoot, 'repo');
+  await initRepo(ffRepoRoot);
+  await mkdir(path.join(ffRepoRoot, 'scripts'), { recursive: true });
+  await writeFile(path.join(ffRepoRoot, 'scripts', '.keep'), 'keep\n', 'utf8');
+  await runCommand(ffRepoRoot, ['add', 'scripts/.keep']);
+  await runCommand(ffRepoRoot, ['commit', '-m', 'add scripts root']);
+
+  let ffServer = null;
+  try {
+    ffServer = createProcess('node', [serverPath], {
+      cwd: ffRepoRoot,
+      env: {
+        CODEX_BIN: 'node',
+        CODEX_APP_SERVER_ARGS: JSON.stringify([stubPath]),
+        APP_SERVER_STUB_TASK_COUNT: '1',
+        APP_SERVER_STUB_WRITE_FILE: 'scripts/collision.txt',
+        APP_SERVER_STUB_WRITE_TEXT: 'tracked from task\n',
+        APP_SERVER_STUB_BASE_WRITE_ROOT: ffRepoRoot,
+        APP_SERVER_STUB_BASE_WRITE_FILE: 'scripts/collision.txt',
+        APP_SERVER_STUB_BASE_WRITE_TEXT: 'untracked on base\n',
+        CDX_WORKTREE_ROOT: path.join(ffRoot, 'worktrees'),
+        CDX_RUN_ID: 'ff-failure-run',
+        CDX_MAX_PARALLELISM: '1',
+        CDX_MIN_PARALLELISM: '1',
+        CDX_EVENT_STREAM: '1',
+        CDX_EVENT_STREAM_DELTAS: '0',
+        CDX_STREAM_EVENTS: '0',
+        CDX_STATS_AUTO_OPEN: '0',
+      },
+    });
+    const ffReader = createMessageReader(ffServer);
+
+    const initRequest = {
+      jsonrpc: '2.0',
+      id: nextId(),
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        clientInfo: { name: 'fast-forward-failure-client', version: '0.0.1' },
+      },
+    };
+    await sendRequest(ffServer, initRequest);
+    await ffReader.next(msg => msg.id === initRequest.id, 5000);
+
+    const callRequest = {
+      jsonrpc: '2.0',
+      id: nextId(),
+      method: 'tools/call',
+      params: {
+        name: 'run',
+        arguments: {
+          prompt: 'Write one integration file',
+          repoRoot: ffRepoRoot,
+          maxParallelism: 1,
+          minParallelism: 1,
+        },
+      },
+    };
+
+    await sendRequest(ffServer, callRequest);
+    const callResponse = await ffReader.next(msg => msg.id === callRequest.id, 30_000);
+    const result = assertToolCallResultContract(callResponse.result, {
+      requireIsError: true,
+    });
+    const text = readToolCallText(result);
+    assert.match(text, /fast_forward_not_applied|Fast-forward failed/);
+
+    const events = ffReader.allMessages
+      .filter(msg => msg.method === 'cdx/event')
+      .map(msg => msg.params ?? {});
+    const ffEvent = events.find(evt => evt.type === 'fastForward.completed');
+    assert.equal(ffEvent?.result?.applied, false);
+    assert.equal(ffEvent?.result?.failed, true);
+    assert.equal(ffEvent?.result?.requiresBaseApply, true);
+    assert.ok(
+      events.some(evt => evt.type === 'run.completed' && evt.status === 'failed' && evt.fastForwardFailure === true),
+      `Expected failed run.completed with fastForwardFailure, got ${events.map(evt => `${evt.type}:${evt.status ?? ''}`).join(', ')}`,
+    );
+  } finally {
+    await stopProcess(ffServer);
+    await removeDirWithRetry(ffRoot);
   }
 });
 

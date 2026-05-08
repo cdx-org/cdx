@@ -83,3 +83,33 @@ test('buildGitCommandArgs adds cwd as a command-scoped safe.directory', async t 
     ['status'],
   );
 });
+
+test('resolveSparseConfig includes Godot runtime resource roots by default', async t => {
+  const fixture = await createRuntimeFixture(t);
+  const { resolveSparseConfig } = await fixture.importRuntime('worktree-resources.js');
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'mcp-cdx-sparse-roots-'));
+  const repoRoot = path.join(tempRoot, 'repo');
+  const previousSparsePaths = process.env.CDX_SPARSE_PATHS;
+  const previousSparseCheckout = process.env.CDX_SPARSE_CHECKOUT;
+
+  t.after(async () => {
+    if (previousSparsePaths === undefined) delete process.env.CDX_SPARSE_PATHS;
+    else process.env.CDX_SPARSE_PATHS = previousSparsePaths;
+    if (previousSparseCheckout === undefined) delete process.env.CDX_SPARSE_CHECKOUT;
+    else process.env.CDX_SPARSE_CHECKOUT = previousSparseCheckout;
+    await rm(tempRoot, { recursive: true, force: true });
+  });
+
+  delete process.env.CDX_SPARSE_PATHS;
+  delete process.env.CDX_SPARSE_CHECKOUT;
+  await mkdir(path.join(repoRoot, 'data'), { recursive: true });
+  await mkdir(path.join(repoRoot, 'scenes'), { recursive: true });
+  await mkdir(path.join(repoRoot, 'assets'), { recursive: true });
+
+  const config = resolveSparseConfig(repoRoot);
+
+  assert.equal(config.enabled, true);
+  assert.ok(config.paths.includes('data'));
+  assert.ok(config.paths.includes('scenes'));
+  assert.ok(config.paths.includes('assets'));
+});

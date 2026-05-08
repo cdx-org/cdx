@@ -101,7 +101,7 @@ export function renderCardViewSection() {
         <div id="cardView" class="card-view">
           <div id="cardHero" class="card card-flex card-hero">
             <div class="card-head">
-              <div id="cardHeroTitle" class="card-title">Watchdog Agent</div>
+              <div id="cardHeroTitle" class="card-title">Orchestrator Agent</div>
               <div id="cardHeroTags" class="card-tags"></div>
             </div>
             <div class="card-body">
